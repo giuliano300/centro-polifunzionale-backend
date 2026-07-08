@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { Roles } from "../../roles/roles.decorator";
 import { RolesGuard } from "../../roles/roles.guard";
 import { AuthGuard } from "@nestjs/passport";
@@ -12,15 +12,28 @@ export class CourseBookingsController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
+  @Roles('admin','gestore','cliente')
   async create(@Body() dto: CreateCourseBookingDto, @Req() req) {
-    return this.courseBookingsService.create(dto, req.user.userId);
+    const targetDto = {
+      ...dto,
+      userId: req.user.role === 'cliente' ? req.user.userId : dto.userId,
+    };
+    return this.courseBookingsService.create(targetDto, req.user.userId);
   }
 
 
   @Get()
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin','gestore')
   async findAll(@Query() filterDto: FilterCourseBookingDto) {
     return this.courseBookingsService.findAll(filterDto);
+  }
+
+  @Delete(':id')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin','gestore')
+  async remove(@Param('id') id: string) {
+    return this.courseBookingsService.remove(id);
   }
 
 }

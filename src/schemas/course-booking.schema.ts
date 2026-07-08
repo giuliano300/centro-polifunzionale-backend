@@ -12,5 +12,14 @@ export class CourseBooking extends Document {
 
   @Prop({ default: 'pending' })
   status: 'pending' | 'confirmed' | 'cancelled';
+
+  @Prop({ required: true, enum: ['paid', 'free'], default: 'free' })
+  enrollmentType: 'paid' | 'free';
+
+  @Prop({ default: 0, min: 0 })
+  amount: number;
+
+  @Prop({ required: true, enum: ['PENDING', 'PAID', 'FREE'], default: 'FREE' })
+  paymentStatus: 'PENDING' | 'PAID' | 'FREE';
 }
 export const CourseBookingSchema = SchemaFactory.createForClass(CourseBooking);

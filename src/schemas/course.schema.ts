@@ -23,6 +23,18 @@ export class Course {
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Booking', required: true })
   booking: Booking;
 
+  @Prop({ required: true, min: 1 })
+  capacity: number;
+
+  @Prop({ required: true, enum: ['paid', 'free'], default: 'free' })
+  enrollmentType: 'paid' | 'free';
+
+  @Prop({ default: 0, min: 0 })
+  price: number;
+
+  @Prop({ default: true })
+  isPublished: boolean;
+
   @Prop({ default: [], type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] })
   participants: mongoose.Types.ObjectId[];
 }

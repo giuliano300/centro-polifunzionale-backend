@@ -5,7 +5,12 @@ import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableCors();
+  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+  const allowedOrigins = process.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim());
+
+  app.enableCors({
+    origin: allowedOrigins?.length ? allowedOrigins : true,
+  });
 
   const config = new DocumentBuilder()
     .setTitle('Centro Polifunzionale API')
@@ -26,8 +31,8 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-   app.useGlobalPipes(new ValidationPipe());
+   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 
-  await app.listen(3000);
+  await app.listen(port);
 }
 bootstrap();

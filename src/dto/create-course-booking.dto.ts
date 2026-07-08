@@ -1,6 +1,14 @@
-import { IsMongoId } from "class-validator";
+import { IsMongoId, IsOptional, IsString } from "class-validator";
 
 export class CreateCourseBookingDto {
   @IsMongoId()
   courseId: string;
+
+  @IsOptional()
+  @IsMongoId()
+  userId?: string;
+
+  @IsOptional()
+  @IsString()
+  transactionId?: string;
 }

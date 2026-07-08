@@ -1,5 +1,4 @@
-import { Prop } from "@nestjs/mongoose";
-import { IsDateString, IsMongoId, IsString } from "class-validator";
+import { IsBoolean, IsDateString, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min } from "class-validator";
 
 // create-course.dto.ts
 export class CreateCourseDto {
@@ -12,12 +11,28 @@ export class CreateCourseDto {
   @IsDateString()
   date: Date;
 
-  @Prop({ required: true })
+  @IsString()
   startTime: string;
 
-  @Prop({ required: true })
+  @IsString()
   endTime: string;
 
   @IsMongoId()
   booking: string;
+
+  @IsNumber()
+  @Min(1)
+  capacity: number;
+
+  @IsEnum(['paid', 'free'])
+  enrollmentType: 'paid' | 'free';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isPublished?: boolean;
 }

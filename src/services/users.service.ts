@@ -15,10 +15,11 @@ export class UsersService {
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    const normalizedUser = this.normalizeOptionalIdentityFields(createUserDto);
     const createdUser = new this.userModel({
-      ...createUserDto,
+      ...normalizedUser,
       password: hashedPassword,
-      role: createUserDto.role || 'cliente'
+      role: normalizedUser.role || 'cliente'
     });
     return createdUser.save();  }
 
@@ -27,11 +28,19 @@ export class UsersService {
   }
 
   async findAll(filterDto: GetUsersFilterDto): Promise<User[]> {
-    const { email, role, limit = 10, page = 1, sortBy = 'email', sortOrder = 'asc' } = filterDto;
+    const { email, role, search, limit = 10, page = 1, sortBy = 'email', sortOrder = 'asc' } = filterDto;
 
     const filter: Record<string, unknown> = {};    
     if (email) filter.email = email;
     if (role) filter.role = role;
+    if (search) {
+      const pattern = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filter.$or = [
+        { email: pattern },
+        { phone: pattern },
+        { taxCode: pattern },
+      ];
+    }
 
     return this.userModel
       .find(filter)
@@ -49,7 +58,12 @@ export class UsersService {
     return user;
   }
   async update(id: string, dto: UpdateUserDto): Promise<User> {
-    const updated = await this.userModel.findByIdAndUpdate(id, dto, {
+    if (dto.password) {
+      dto.password = await bcrypt.hash(dto.password, 10);
+    }
+    const normalizedDto = this.normalizeOptionalIdentityFields(dto);
+
+    const updated = await this.userModel.findByIdAndUpdate(id, normalizedDto, {
       new: true,
       runValidators: true,
     }).exec();
@@ -67,6 +81,20 @@ export class UsersService {
       throw new NotFoundException('Utente non trovato');
     }
     return { deleted: true };
+  }
+
+  private normalizeOptionalIdentityFields<T extends { phone?: string; taxCode?: string }>(dto: T): T {
+    const normalized = { ...dto };
+    if (normalized.phone === '') {
+      delete normalized.phone;
+    }
+    if (normalized.taxCode === '') {
+      delete normalized.taxCode;
+    }
+    if (normalized.taxCode) {
+      normalized.taxCode = normalized.taxCode.toUpperCase();
+    }
+    return normalized;
   }
 
 }

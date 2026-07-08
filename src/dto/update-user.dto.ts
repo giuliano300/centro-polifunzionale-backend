@@ -12,6 +12,14 @@ export class UpdateUserDto {
   password?: string;
 
   @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  taxCode?: string;
+
+  @IsOptional()
   @IsEnum(['admin', 'gestore', 'cliente'])
   role?: UserRole;
 }

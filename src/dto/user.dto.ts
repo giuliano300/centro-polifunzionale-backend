@@ -5,6 +5,9 @@ export class UserDto {
   email: string;
 
   @IsString()
+  name: string;
+
+  @IsString()
   id: string;
 
   @IsString()

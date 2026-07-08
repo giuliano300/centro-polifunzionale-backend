@@ -11,14 +11,26 @@ export class Booking extends Document {
   @Prop({ required: true, type: mongoose.Schema.Types.ObjectId, ref: 'Space' })
   space: Space;
 
+  @Prop({ required: true, type: Date })
+  date: Date;
+
   @Prop({ required: true })
-  date: string;
+  name?: string;
 
   @Prop({ required: true })
   startTime: string;
 
   @Prop({ required: true })
   endTime: string;
+
+  @Prop({ required: true, enum: ['whole_room', 'workstation'], default: 'whole_room' })
+  rentalUnit: 'whole_room' | 'workstation';
+
+  @Prop({ required: true, enum: ['time', 'full_day'], default: 'time' })
+  rentalMode: 'time' | 'full_day';
+
+  @Prop({ default: 1, min: 1 })
+  workstationQuantity: number;
 
   @Prop({ default: 'pending' })
   status: 'pending' | 'confirmed' | 'cancelled';
