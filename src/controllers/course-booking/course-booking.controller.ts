@@ -24,16 +24,19 @@ export class CourseBookingsController {
 
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
-  async findAll(@Query() filterDto: FilterCourseBookingDto) {
-    return this.courseBookingsService.findAll(filterDto);
+  @Roles('admin','gestore','cliente')
+  async findAll(@Query() filterDto: FilterCourseBookingDto, @Req() req) {
+    const targetFilter = req.user.role === 'cliente'
+      ? { ...filterDto, userId: req.user.userId }
+      : filterDto;
+    return this.courseBookingsService.findAll(targetFilter);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
-  async remove(@Param('id') id: string) {
-    return this.courseBookingsService.remove(id);
+  @Roles('admin','gestore','cliente')
+  async remove(@Param('id') id: string, @Req() req) {
+    return this.courseBookingsService.remove(id, req.user.role === 'cliente' ? req.user.userId : undefined);
   }
 
 }

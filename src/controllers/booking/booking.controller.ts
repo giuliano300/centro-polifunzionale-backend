@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { CreateBookingDto } from "../../dto/create-booking.dto";
 import { UpdateBookingDto } from "../../dto/update-booking.dto";
 import { Roles } from "../../roles/roles.decorator";
@@ -13,23 +13,48 @@ export class BookingsController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
+  @Roles('admin','gestore','cliente')
   async create(@Body() dto: CreateBookingDto, @Req() req) {
-    return this.bookingsService.create(dto, req.user.userId);
+    const targetDto = {
+      ...dto,
+      userId: req.user.role === 'cliente' ? req.user.userId : dto.userId,
+    };
+    return this.bookingsService.create(targetDto, req.user.userId);
   }
 
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
-  async findAll(@Query() filterDto: FilterBookingsDto) {
-    return this.bookingsService.findAll(filterDto);
+  @Roles('admin','gestore','cliente')
+  async findAll(@Query() filterDto: FilterBookingsDto, @Req() req) {
+    const targetFilter = req.user.role === 'cliente'
+      ? { ...filterDto, userId: req.user.userId }
+      : filterDto;
+    return this.bookingsService.findAll(targetFilter);
+  }
+
+  @Get('availability')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin','gestore','cliente')
+  async availability(
+    @Query('spaceId') spaceId: string,
+    @Query('date') date: string,
+    @Query('rentalMode') rentalMode?: string,
+    @Query('workstationQuantity') workstationQuantity?: string,
+  ) {
+    return this.bookingsService.availability(spaceId, date, rentalMode || 'time', Number(workstationQuantity || 1));
   }
 
   @Get(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
-  async findOne(@Param('id') id: string) {
-    return this.bookingsService.findOne(id);
+  @Roles('admin','gestore','cliente')
+  async findOne(@Param('id') id: string, @Req() req) {
+    const booking = await this.bookingsService.findOne(id);
+    const bookingUserId = typeof booking.user === 'string' ? booking.user : (booking.user as any)?._id?.toString();
+    if (req.user.role === 'cliente' && bookingUserId !== req.user.userId) {
+      throw new ForbiddenException('Prenotazione non accessibile');
+    }
+
+    return booking;
   }
 
   @Put(':id')

@@ -25,7 +25,7 @@ export class SpacesController {
   // GET /spaces
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
+  @Roles('admin','gestore','cliente')
   async findAll(): Promise<Space[]> {
     return this.spacesService.findAll();
   }

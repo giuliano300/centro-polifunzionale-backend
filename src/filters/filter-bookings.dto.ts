@@ -26,4 +26,8 @@ export class FilterBookingsDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
 }

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { CourseBooking } from 'src/schemas/course-booking.schema';
@@ -67,12 +67,17 @@ export class CourseBookingsService {
     }).exec();
   }
 
-  async remove(id: string): Promise<{ deleted: boolean }> {
-    const deleted = await this.courseBookingModel.findByIdAndDelete(id).exec();
-    if (!deleted) {
+  async remove(id: string, allowedUserId?: string): Promise<{ deleted: boolean }> {
+    const courseBooking = await this.courseBookingModel.findById(id).exec();
+    if (!courseBooking) {
       throw new NotFoundException('Iscrizione corso non trovata');
     }
 
+    if (allowedUserId && courseBooking.user.toString() !== allowedUserId) {
+      throw new ForbiddenException('Iscrizione corso non accessibile');
+    }
+
+    await this.courseBookingModel.findByIdAndDelete(id).exec();
     return { deleted: true };
   }
 }

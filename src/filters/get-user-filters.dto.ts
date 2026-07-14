@@ -15,6 +15,10 @@ export class GetUsersFilterDto {
   role?: string;
 
   @IsOptional()
+  @IsEnum(['admin', 'gestore', 'cliente'])
+  excludeRole?: string;
+
+  @IsOptional()
   @IsInt()
   @Type(() => Number)
   limit?: number;

@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from '../roles/roles.decorator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -30,4 +30,9 @@ export class CreateUserDto {
   @IsString()
   @IsOptional()
   role?: UserRole;
+
+  @ApiProperty({ example: true, description: 'Utente attivo', required: false })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
 }

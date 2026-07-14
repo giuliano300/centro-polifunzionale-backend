@@ -10,6 +10,7 @@ import { BookingsModule } from './controllers/booking/booking.module';
 import { CourseBookingModule } from './controllers/course-booking/course-booking.module';
 import { CoursesModule } from './controllers/courses/courses.module';
 import { PaymentModule } from './controllers/payment/payment.module';
+import { DashboardModule } from './controllers/dashboard/dashboard.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -25,7 +26,8 @@ import { PaymentModule } from './controllers/payment/payment.module';
     BookingsModule,
     CoursesModule,
     CourseBookingModule,
-    PaymentModule
+    PaymentModule,
+    DashboardModule
   ],
   controllers: [AppController],
     providers: [AppService],

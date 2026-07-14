@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { CourseService } from "../../services/course.service";
 import { CreateCourseDto } from "../../dto/create-course.dto";
 import { UpdateCourseDto } from "../../dto/update-course.dto";
@@ -18,8 +18,13 @@ export class CoursesController {
   }
 
   @Get()
-  findAll() {
-    return this.courseService.findAll();
+  findAll(
+    @Query('start') start?: string,
+    @Query('end') end?: string,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.courseService.findAll({ start, end, status, search });
   }
 
   @Get(':id')

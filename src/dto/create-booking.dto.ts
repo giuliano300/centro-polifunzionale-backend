@@ -1,10 +1,15 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsIn, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsIn, IsInt, IsMongoId, IsOptional, IsString, Min } from "class-validator";
 
 export class CreateBookingDto {
   @ApiProperty({ description: 'Id dello spazio' })
   @IsString()
   spaceId: string;
+
+  @ApiProperty({ description: 'Id utente cliente/gestore da associare', required: false })
+  @IsOptional()
+  @IsMongoId()
+  userId?: string;
 
   @ApiProperty({ example: 'Prenotazione sala', description: 'nome della prenotazione' })
   @IsString()
