@@ -8,6 +8,20 @@ import { Booking, BookingDocument } from "src/schemas/booking.schema";
 import { Payment, PaymentDocument } from "src/schemas/payment.schema";
 import { CourseBooking } from "src/schemas/course-booking.schema";
 
+type SearchableCourse = CourseDocument & {
+  booking?: {
+    name?: string;
+    user?: {
+      _id?: string;
+      name?: string;
+      email?: string;
+    };
+    space?: {
+      name?: string;
+    };
+  };
+};
+
 @Injectable()
 export class CourseService {
   constructor(
@@ -17,21 +31,25 @@ export class CourseService {
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
   ) {}
 
-  async create(dto: CreateCourseDto): Promise<Course> {
-    await this.validateCourseRules(dto);
+  async create(dto: CreateCourseDto, managerId?: string): Promise<Course> {
+    const normalized = await this.validateCourseRules(dto, undefined, managerId);
 
     const course = new this.courseModel({
-      ...dto,
-      price: dto.enrollmentType === 'free' ? 0 : dto.price,
-      isPublished: dto.isPublished ?? true,
+      ...normalized,
+      price: normalized.enrollmentType === 'free' ? 0 : normalized.price,
+      isPublished: normalized.isPublished ?? true,
     });
     return course.save();
   }
 
-  private async validateCourseRules(dto: CreateCourseDto, courseId?: string): Promise<void> {
+  private async validateCourseRules(dto: CreateCourseDto, courseId?: string, managerId?: string): Promise<CreateCourseDto> {
     const booking = await this.bookingModel.findById(dto.booking).exec();
     if (!booking) {
       throw new NotFoundException('Prenotazione spazio non trovata');
+    }
+
+    if (managerId && booking.user.toString() !== managerId) {
+      throw new BadRequestException('Prenotazione non accessibile per questo gestore');
     }
 
     const today = new Date();
@@ -64,9 +82,16 @@ export class CourseService {
     if (dto.enrollmentType === 'paid' && (!dto.price || dto.price <= 0)) {
       throw new BadRequestException('Un corso a pagamento deve avere un prezzo maggiore di zero');
     }
+
+    return {
+      ...dto,
+      date: booking.date,
+      startTime: booking.startTime,
+      endTime: booking.endTime,
+    };
   }
 
-  async findAll(filters: { start?: string; end?: string; status?: string; search?: string } = {}): Promise<Course[]> {
+  async findAll(filters: { start?: string; end?: string; status?: string; search?: string; managerId?: string } = {}): Promise<Course[]> {
     const query: FilterQuery<Course> = {};
     if (filters.start || filters.end) {
       query.date = {};
@@ -76,20 +101,28 @@ export class CourseService {
     if (filters.status === 'published') query.isPublished = true;
     if (filters.status === 'closed') query.isPublished = false;
 
-    const courses = await this.courseModel.find(query).populate({
+    let courses = await this.courseModel.find(query).populate({
       path: 'booking',
       populate: [
         { path: 'user' },
         { path: 'space' },
       ],
-    }).populate('participants');
+    }).populate('participants') as unknown as SearchableCourse[];
+
+    if (filters.managerId) {
+      courses = courses.filter((course) => {
+        const booking = typeof course.booking === 'string' ? null : course.booking;
+        const user = typeof booking?.user === 'string' ? booking.user : booking?.user?._id?.toString();
+        return user === filters.managerId;
+      });
+    }
 
     const normalizedSearch = filters.search?.trim().toLowerCase();
     if (!normalizedSearch) {
-      return courses;
+      return courses as unknown as Course[];
     }
 
-    return courses.filter((course: any) => {
+    return courses.filter((course) => {
       const text = [
         course.title,
         course.description,
@@ -100,7 +133,7 @@ export class CourseService {
         course.booking?.space?.name,
       ].join(' ').toLowerCase();
       return text.includes(normalizedSearch);
-    });
+    }) as unknown as Course[];
   }
 
   async findOne(id: string): Promise<Course | null> {
@@ -113,7 +146,7 @@ export class CourseService {
     }).populate('participants');
   }
 
-  async update(id: string, dto: UpdateCourseDto): Promise<Course> {
+  async update(id: string, dto: UpdateCourseDto, managerId?: string): Promise<Course> {
     const current = await this.courseModel.findById(id).exec();
     if (!current) {
       throw new NotFoundException('Corso non trovato');
@@ -132,18 +165,18 @@ export class CourseService {
       isPublished: dto.isPublished ?? current.isPublished,
     } as CreateCourseDto;
 
-    await this.validateCourseRules(merged, id);
+    const normalized = await this.validateCourseRules(merged, id, managerId);
 
     const bookedSeats = await this.courseBookingModel.countDocuments({
       course: new Types.ObjectId(id),
       status: { $ne: 'cancelled' },
     }).exec();
 
-    if (merged.capacity < bookedSeats) {
+    if (normalized.capacity < bookedSeats) {
       throw new BadRequestException('La capienza non puo essere inferiore agli iscritti attuali');
     }
 
-    const updated = await this.courseModel.findByIdAndUpdate(id, merged, { new: true, runValidators: true }).exec();
+    const updated = await this.courseModel.findByIdAndUpdate(id, normalized, { new: true, runValidators: true }).exec();
     if (!updated) {
       throw new NotFoundException('Corso non trovato');
     }
@@ -151,12 +184,28 @@ export class CourseService {
     return updated;
   }
 
-  async remove(id: string): Promise<{ deleted: boolean }> {
-    const deletedCourse = await this.courseModel.findByIdAndDelete(id);
-    if (!deletedCourse) {
+  async remove(id: string, managerId?: string): Promise<{ deleted: boolean }> {
+    const course = await this.courseModel.findById(id).exec();
+    if (!course) {
       throw new NotFoundException('Corso non trovato');
     }
 
+    if (managerId) {
+      await this.validateCourseRules({
+        title: course.title,
+        description: course.description,
+        date: course.date,
+        startTime: course.startTime,
+        endTime: course.endTime,
+        booking: course.booking.toString(),
+        capacity: course.capacity,
+        enrollmentType: course.enrollmentType,
+        price: course.price,
+        isPublished: course.isPublished,
+      }, id, managerId);
+    }
+
+    await this.courseModel.findByIdAndDelete(id).exec();
     await this.courseBookingModel.deleteMany({ course: id });
     return { deleted: true };
   }

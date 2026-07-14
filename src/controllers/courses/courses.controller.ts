@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { CourseService } from "../../services/course.service";
 import { CreateCourseDto } from "../../dto/create-course.dto";
 import { UpdateCourseDto } from "../../dto/update-course.dto";
@@ -13,18 +13,27 @@ export class CoursesController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin', 'gestore')
-  create(@Body() dto: CreateCourseDto) {
-    return this.courseService.create(dto);
+  create(@Body() dto: CreateCourseDto, @Req() req) {
+    return this.courseService.create(dto, req.user.role === 'gestore' ? req.user.userId : undefined);
   }
 
   @Get()
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin', 'gestore', 'cliente')
   findAll(
     @Query('start') start?: string,
     @Query('end') end?: string,
     @Query('status') status?: string,
     @Query('search') search?: string,
+    @Req() req?,
   ) {
-    return this.courseService.findAll({ start, end, status, search });
+    return this.courseService.findAll({
+      start,
+      end,
+      status,
+      search,
+      managerId: req.user.role === 'gestore' ? req.user.userId : undefined,
+    });
   }
 
   @Get(':id')
@@ -35,14 +44,14 @@ export class CoursesController {
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin', 'gestore')
-  update(@Param('id') id: string, @Body() dto: UpdateCourseDto) {
-    return this.courseService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateCourseDto, @Req() req) {
+    return this.courseService.update(id, dto, req.user.role === 'gestore' ? req.user.userId : undefined);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin')
-  remove(@Param('id') id: string) {
-    return this.courseService.remove(id);
+  @Roles('admin', 'gestore')
+  remove(@Param('id') id: string, @Req() req) {
+    return this.courseService.remove(id, req.user.role === 'gestore' ? req.user.userId : undefined);
   }
 }

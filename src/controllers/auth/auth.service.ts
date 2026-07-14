@@ -5,6 +5,7 @@ import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from '../../dto/create-user.dto';
 import { User } from 'src/schemas/user.schema';
 import { UserDto } from 'src/dto/user.dto';
+import { ResetPasswordDto } from 'src/dto/reset-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -30,5 +31,9 @@ export class AuthService {
 
   async register(createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
+  }
+
+  async resetManagerPassword(dto: ResetPasswordDto) {
+    return this.usersService.resetPasswordByEmail(dto.email, dto.password, ['gestore', 'admin']);
   }
 }

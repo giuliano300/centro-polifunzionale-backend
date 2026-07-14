@@ -7,6 +7,8 @@ import { BookingService } from "../../services/booking.service";
 import { AuthGuard } from "@nestjs/passport";
 import { FilterBookingsDto } from "src/filters/filter-bookings.dto";
 
+type PopulatedUserRef = string | { _id?: { toString(): string }; toString(): string };
+
 @Controller('bookings')
 export class BookingsController {
   constructor(private readonly bookingsService: BookingService) {}
@@ -26,7 +28,7 @@ export class BookingsController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin','gestore','cliente')
   async findAll(@Query() filterDto: FilterBookingsDto, @Req() req) {
-    const targetFilter = req.user.role === 'cliente'
+    const targetFilter = req.user.role === 'cliente' || req.user.role === 'gestore'
       ? { ...filterDto, userId: req.user.userId }
       : filterDto;
     return this.bookingsService.findAll(targetFilter);
@@ -49,7 +51,10 @@ export class BookingsController {
   @Roles('admin','gestore','cliente')
   async findOne(@Param('id') id: string, @Req() req) {
     const booking = await this.bookingsService.findOne(id);
-    const bookingUserId = typeof booking.user === 'string' ? booking.user : (booking.user as any)?._id?.toString();
+    const bookingUser = booking.user as PopulatedUserRef;
+    const bookingUserId = typeof bookingUser === 'string'
+      ? bookingUser
+      : bookingUser._id?.toString() || bookingUser.toString();
     if (req.user.role === 'cliente' && bookingUserId !== req.user.userId) {
       throw new ForbiddenException('Prenotazione non accessibile');
     }

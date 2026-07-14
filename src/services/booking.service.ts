@@ -9,6 +9,18 @@ import { Payment, PaymentDocument } from 'src/schemas/payment.schema';
 import { BookingWithPayments } from 'src/interfaces/BookingWithPayments';
 import { Space, SpaceDocument } from 'src/schemas/space.schema';
 
+type SearchableBooking = BookingDocument & {
+  user?: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    taxCode?: string;
+  };
+  space?: {
+    name?: string;
+  };
+};
+
 @Injectable()
 export class BookingService {
   constructor(
@@ -81,7 +93,8 @@ export class BookingService {
         rentalUnit: space.rentalUnit || 'whole_room',
         workstationQuantity,
       };
-      const available = await this.isAvailableForDto(space, dto);
+      const available = this.isStartBookableToday(space, dto, open, normalizedClose)
+        && await this.isAvailableForDto(space, dto);
       return {
         spaceId,
         date,
@@ -110,6 +123,10 @@ export class BookingService {
         rentalUnit: space.rentalUnit || 'whole_room',
         workstationQuantity,
       };
+      if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
+        continue;
+      }
+
       slots.push({
         startTime: dto.startTime,
         endTime: dto.endTime,
@@ -173,6 +190,9 @@ export class BookingService {
       if (normalizedStart !== open || normalizedEnd !== normalizedClose) {
         throw new BadRequestException('La giornata intera deve coincidere con orario di apertura e chiusura dello spazio');
       }
+      if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
+        throw new BadRequestException('Puoi prenotare solo dalla prossima frazione disponibile');
+      }
       return;
     }
 
@@ -184,6 +204,41 @@ export class BookingService {
     if ((normalizedStart - open) % slotMinutes !== 0 || (normalizedEnd - normalizedStart) % slotMinutes !== 0) {
       throw new BadRequestException(`Questo spazio si prenota a frazioni di ${slotMinutes} minuti`);
     }
+
+    if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
+      throw new BadRequestException('Puoi prenotare solo dalla prossima frazione disponibile');
+    }
+  }
+
+  private isStartBookableToday(
+    space: SpaceDocument,
+    dto: Pick<CreateBookingDto, 'date' | 'startTime' | 'endTime' | 'rentalMode'>,
+    open: number,
+    normalizedClose: number,
+  ): boolean {
+    if (!this.isToday(dto.date)) {
+      return true;
+    }
+
+    const now = new Date();
+    const currentMinutes = (now.getHours() * 60) + now.getMinutes();
+    const normalizedNow = normalizedClose > 1440 && currentMinutes < open
+      ? currentMinutes + 1440
+      : currentMinutes;
+
+    const { start } = this.getNormalizedInterval(space, dto);
+
+    if ((dto.rentalMode || 'time') === 'full_day') {
+      return normalizedNow < open;
+    }
+
+    const slotMinutes = space.timeSlotMinutes || 60;
+    const elapsed = Math.max(0, normalizedNow - open);
+    const nextBookableStart = normalizedNow < open
+      ? open
+      : open + (Math.floor(elapsed / slotMinutes) + 1) * slotMinutes;
+
+    return start >= nextBookableStart && start < normalizedClose;
   }
 
   private async validateBookingConflicts(space: SpaceDocument, dto: CreateBookingDto): Promise<void> {
@@ -236,6 +291,14 @@ export class BookingService {
     const bookingDate = new Date(date);
     const openingHours = space.openingHours?.length ? space.openingHours : this.defaultOpeningHours();
     return openingHours.find((item) => item.day === bookingDate.getDay());
+  }
+
+  private isToday(value: string | Date): boolean {
+    const date = new Date(value);
+    const today = new Date();
+    return date.getFullYear() === today.getFullYear()
+      && date.getMonth() === today.getMonth()
+      && date.getDate() === today.getDate();
   }
 
   private getNormalizedInterval(space: SpaceDocument, dto: Pick<CreateBookingDto, 'date' | 'startTime' | 'endTime'>): { start: number; end: number } {
@@ -304,7 +367,7 @@ export class BookingService {
 
     const normalizedSearch = search?.trim().toLowerCase();
     const filteredBookings = normalizedSearch
-      ? bookings.filter((booking: any) => {
+      ? (bookings as SearchableBooking[]).filter((booking) => {
         const text = [
           booking.name,
           booking.status,

@@ -28,6 +28,22 @@ export class UsersService {
     return await this.userModel.findOne({ email }).exec();
   }
 
+  async resetPasswordByEmail(email: string, password: string, allowedRoles?: string[]): Promise<{ updated: boolean }> {
+    const user = await this.userModel.findOne({ email }).exec();
+    if (!user) {
+      throw new NotFoundException('Utente non trovato');
+    }
+
+    if (allowedRoles?.length && !allowedRoles.includes(user.role)) {
+      throw new BadRequestException('Recupero password non disponibile per questo utente');
+    }
+
+    user.password = await bcrypt.hash(password, 10);
+    user.isActive = true;
+    await user.save();
+    return { updated: true };
+  }
+
   async findAll(filterDto: GetUsersFilterDto): Promise<User[]> {
     const { email, role, excludeRole, search, limit = 10, page = 1, sortBy = 'email', sortOrder = 'asc' } = filterDto;
 

@@ -17,6 +17,15 @@ export class Payment extends Document {
 
   @Prop()
   transactionId?: string;
+
+  @Prop({ enum: ['manual', 'stripe', 'paypal', 'nexi'], default: 'manual' })
+  provider?: 'manual' | 'stripe' | 'paypal' | 'nexi';
+
+  @Prop()
+  checkoutUrl?: string;
+
+  @Prop()
+  providerPayload?: string;
 }
 
 export type PaymentDocument = Payment & Document;

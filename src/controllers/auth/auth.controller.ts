@@ -2,6 +2,7 @@ import { Controller, Post, Body, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CreateUserDto } from '../../dto/create-user.dto';
 import { LoginDto } from '../../dto/login.dto';
+import { ResetPasswordDto } from 'src/dto/reset-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -19,5 +20,10 @@ export class AuthController {
       throw new UnauthorizedException('Invalid credentials');
     }
     return this.authService.login(user);
+  }
+
+  @Post('manager/reset-password')
+  async resetManagerPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetManagerPassword(dto);
   }
 }

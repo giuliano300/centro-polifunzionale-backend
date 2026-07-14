@@ -28,7 +28,9 @@ export class CourseBookingsController {
   async findAll(@Query() filterDto: FilterCourseBookingDto, @Req() req) {
     const targetFilter = req.user.role === 'cliente'
       ? { ...filterDto, userId: req.user.userId }
-      : filterDto;
+      : req.user.role === 'gestore'
+        ? { ...filterDto, managerId: req.user.userId }
+        : filterDto;
     return this.courseBookingsService.findAll(targetFilter);
   }
 

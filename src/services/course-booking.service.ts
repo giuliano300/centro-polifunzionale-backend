@@ -6,6 +6,14 @@ import { CreateCourseBookingDto } from 'src/dto/create-course-booking.dto';
 import { FilterCourseBookingDto } from 'src/filters/filter-course-booking.dto';
 import { Course, CourseDocument } from 'src/schemas/course.schema';
 
+type PopulatedCourseBooking = CourseBooking & {
+  course?: {
+    booking?: {
+      user?: { _id?: string } | string;
+    };
+  };
+};
+
 @Injectable()
 export class CourseBookingsService {
   constructor(
@@ -50,12 +58,12 @@ export class CourseBookingsService {
     return booking.save();
   }
 
-  async findAll(filters: FilterCourseBookingDto): Promise<CourseBooking[]> {
+  async findAll(filters: FilterCourseBookingDto & { managerId?: string }): Promise<CourseBooking[]> {
     const query: FilterQuery<CourseBooking> = {};
     if (filters.userId) query.user = new Types.ObjectId(filters.userId);
     if (filters.courseId) query.course = new Types.ObjectId(filters.courseId);
     if (filters.status) query.status = filters.status;
-    return this.courseBookingModel.find(query).populate('user').populate({
+    let courseBookings = await this.courseBookingModel.find(query).populate('user').populate({
       path: 'course',
       populate: {
         path: 'booking',
@@ -64,7 +72,19 @@ export class CourseBookingsService {
           { path: 'space' },
         ],
       },
-    }).exec();
+    }).exec() as unknown as PopulatedCourseBooking[];
+
+    if (filters.managerId) {
+      courseBookings = courseBookings.filter((item) => {
+        const course = item.course || null;
+        const user = typeof course?.booking?.user === 'string'
+          ? course.booking.user
+          : course?.booking?.user?._id?.toString();
+        return user === filters.managerId;
+      });
+    }
+
+    return courseBookings as unknown as CourseBooking[];
   }
 
   async remove(id: string, allowedUserId?: string): Promise<{ deleted: boolean }> {
