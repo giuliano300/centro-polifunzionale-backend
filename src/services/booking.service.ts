@@ -8,6 +8,9 @@ import { FilterBookingsDto } from 'src/filters/filter-bookings.dto';
 import { Payment, PaymentDocument } from 'src/schemas/payment.schema';
 import { BookingWithPayments } from 'src/interfaces/BookingWithPayments';
 import { Space, SpaceDocument } from 'src/schemas/space.schema';
+import { User, UserDocument } from 'src/schemas/user.schema';
+import { WalletService } from './wallet.service';
+import { NotificationsService } from './notifications.service';
 
 type SearchableBooking = BookingDocument & {
   user?: {
@@ -21,12 +24,22 @@ type SearchableBooking = BookingDocument & {
   };
 };
 
+type PaginatedBookings = {
+  items: BookingWithPayments[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
 @Injectable()
 export class BookingService {
   constructor(
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
     @InjectModel(Space.name) private spaceModel: Model<SpaceDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private walletService: WalletService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async create(createBookingDto: CreateBookingDto, userId: string): Promise<Booking> {
@@ -53,6 +66,14 @@ export class BookingService {
       amount,
       status: 'PENDING',
       method: 'manual',
+    });
+    const manager = await this.userModel.findById(createBookingDto.userId || userId).exec();
+    await this.notificationsService.create({
+      audience: 'admin',
+      title: 'Nuovo acquisto spazio',
+      message: `${manager?.name || manager?.email || 'Gestore'} ha acquistato ${space.name} per il ${this.formatNotificationDate(savedBooking.date)}.`,
+      type: 'booking_created',
+      link: '/bookings',
     });
     return savedBooking;
   }
@@ -301,6 +322,18 @@ export class BookingService {
       && date.getDate() === today.getDate();
   }
 
+  private isAfterToday(value: string | Date): boolean {
+    const date = new Date(value);
+    const today = new Date();
+    date.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+    return date.getTime() > today.getTime();
+  }
+
+  private formatNotificationDate(value: string | Date): string {
+    return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
+  }
+
   private getNormalizedInterval(space: SpaceDocument, dto: Pick<CreateBookingDto, 'date' | 'startTime' | 'endTime'>): { start: number; end: number } {
     const slot = this.getOpeningSlot(space, dto.date);
     const open = this.timeToMinutes(slot?.openTime || '00:00');
@@ -342,8 +375,8 @@ export class BookingService {
     ];
   }
 
-  async findAll(filterDto: FilterBookingsDto): Promise<BookingWithPayments[]> {
-    const { spaceId, userId, date, status, start, end, search } = filterDto;
+  async findAll(filterDto: FilterBookingsDto): Promise<BookingWithPayments[] | PaginatedBookings> {
+    const { spaceId, userId, date, status, excludeStatus, start, end, search, page, limit } = filterDto;
 
     const query: FilterQuery<Booking> = {};
 
@@ -357,10 +390,15 @@ export class BookingService {
       if (end) query.date.$lte = new Date(end);
     }
 
-    if (status) query.status = status;
+    if (status) {
+      query.status = status;
+    } else if (excludeStatus) {
+      query.status = { $ne: excludeStatus };
+    }
 
     const bookings = await this.bookingModel
       .find(query)
+      .sort({ createdAt: -1, _id: -1 })
       .populate('user')
       .populate('space')
       .exec();
@@ -381,22 +419,38 @@ export class BookingService {
       })
       : bookings;
 
+    const shouldPaginate = !!page || !!limit;
+    const pageNumber = Math.max(Number(page || 1), 1);
+    const limitNumber = Math.min(Math.max(Number(limit || 10), 1), 100);
+    const paginatedBookings = shouldPaginate
+      ? filteredBookings.slice((pageNumber - 1) * limitNumber, pageNumber * limitNumber)
+      : filteredBookings;
+
     const bookingsWithPayments: BookingWithPayments[] = await Promise.all(
-      filteredBookings.map(async (booking) => {
+      paginatedBookings.map(async (booking) => {
         const payments = await this.paymentModel.find({ bookingId: booking._id }).exec();
         return { booking, payments };
       }),
     );
 
+    if (shouldPaginate) {
+      return {
+        items: bookingsWithPayments,
+        total: filteredBookings.length,
+        page: pageNumber,
+        limit: limitNumber,
+      };
+    }
+
     return bookingsWithPayments;
   }
 
   async findByUser(userId: string): Promise<Booking[]> {
-    return this.bookingModel.find({ user: userId }).populate('space').exec();
+    return this.bookingModel.find({ user: userId }).sort({ createdAt: -1, _id: -1 }).populate('space').exec();
   }
 
   async findBySpace(spaceId: string): Promise<Booking[]> {
-    return this.bookingModel.find({ space: spaceId }).populate('user').exec();
+    return this.bookingModel.find({ space: spaceId }).sort({ createdAt: -1, _id: -1 }).populate('user').exec();
   }
 
   async findOne(id: string): Promise<Booking> {
@@ -413,6 +467,76 @@ export class BookingService {
       throw new NotFoundException(`Booking #${id} not found`);
     }
     return updated;
+  }
+
+  async requestCancellation(id: string): Promise<Booking> {
+    const booking = await this.bookingModel.findById(id).exec();
+    if (!booking) {
+      throw new NotFoundException(`Booking #${id} not found`);
+    }
+
+    if (booking.status === 'cancelled') {
+      throw new BadRequestException('La prenotazione e gia annullata');
+    }
+
+    if (booking.status === 'cancellation_requested') {
+      throw new BadRequestException('La richiesta di annullamento e gia stata inviata');
+    }
+
+    if (!this.isAfterToday(booking.date)) {
+      throw new BadRequestException('Puoi chiedere l annullamento solo per prenotazioni future, da domani in poi');
+    }
+
+    booking.status = 'cancellation_requested';
+    const savedBooking = await booking.save();
+    const populatedBooking = await this.bookingModel.findById(savedBooking._id).populate('user').populate('space').exec();
+    const manager = populatedBooking?.user as unknown as { name?: string; email?: string } | undefined;
+    const space = populatedBooking?.space as unknown as { name?: string } | undefined;
+    await this.notificationsService.create({
+      audience: 'admin',
+      title: 'Richiesta annullamento',
+      message: `${manager?.name || manager?.email || 'Gestore'} ha richiesto l annullamento di ${space?.name || 'uno spazio'} del ${this.formatNotificationDate(savedBooking.date)}.`,
+      type: 'booking_cancellation_requested',
+      link: '/cancellation-requests',
+    });
+    return savedBooking;
+  }
+
+  async approveCancellation(id: string, walletCreditAmount: number): Promise<Booking> {
+    const booking = await this.bookingModel.findById(id).populate('user').populate('space').exec();
+    if (!booking) {
+      throw new NotFoundException(`Booking #${id} not found`);
+    }
+
+    if (booking.status !== 'cancellation_requested') {
+      throw new BadRequestException('La prenotazione non ha una richiesta di annullamento aperta');
+    }
+
+    const paidPayment = await this.paymentModel.findOne({ bookingId: booking._id, status: 'PAID' }).exec();
+    const fallbackPayment = await this.paymentModel.findOne({ bookingId: booking._id }).sort({ createdAt: 1 }).exec();
+    const paidAmount = paidPayment?.amount || fallbackPayment?.amount || 0;
+    const creditAmount = Number(walletCreditAmount || 0);
+
+    if (creditAmount < 0) {
+      throw new BadRequestException('Il credito portafogli non puo essere negativo');
+    }
+
+    if (creditAmount > paidAmount) {
+      throw new BadRequestException('Il credito portafogli non puo superare l importo pagato');
+    }
+
+    const bookingUser = booking.user as unknown as { _id?: { toString(): string }; toString(): string };
+    const userId = bookingUser._id?.toString() || bookingUser.toString();
+    const bookingId = (booking._id as Types.ObjectId).toString();
+    await this.walletService.creditCancellationRefund(
+      userId,
+      bookingId,
+      creditAmount,
+      `Credito da annullamento prenotazione ${booking.name || booking._id}`,
+    );
+
+    booking.status = 'cancelled';
+    return booking.save();
   }
 
   async remove(id: string): Promise<{ deleted: boolean }> {

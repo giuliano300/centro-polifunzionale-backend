@@ -13,7 +13,7 @@ export class SpacesService {
 
   // TROVA TUTTI GLI SPAZI
   async findAll(): Promise<Space[]> {
-    return this.spaceModel.find().exec();
+    return this.spaceModel.find().sort({ _id: -1 }).exec();
   }
 
   // TROVA UNO SPAZIO PER ID

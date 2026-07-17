@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { UsersService } from '../../services/users.service';
 import { User } from '../../schemas/user.schema';
 import { UpdateUserDto } from 'src/dto/update-user.dto';
@@ -24,6 +24,20 @@ export class UsersController {
   @Roles('admin', 'gestore')
   async create(@Body() dto: CreateUserDto): Promise<User> {
     return this.usersService.create({ ...dto, role: dto.role || 'cliente' });
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin', 'gestore', 'cliente')
+  async getMe(@Req() req): Promise<User> {
+    return this.usersService.findById(req.user.userId);
+  }
+
+  @Put('me')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin', 'gestore', 'cliente')
+  async updateMe(@Req() req, @Body() dto: UpdateUserDto): Promise<User> {
+    return this.usersService.updateSelf(req.user.userId, dto);
   }
   
   @Get('email/:email')

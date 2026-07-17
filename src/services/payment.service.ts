@@ -143,6 +143,7 @@ export class PaymentService {
 
     const payments = await this.paymentModel
       .find(query)
+      .sort({ createdAt: -1, _id: -1 })
       .populate({
         path: 'bookingId',
         populate: [
@@ -176,7 +177,7 @@ export class PaymentService {
   async findByBooking(bookingId: string, allowedUserId?: string): Promise<Payment[]> {
     await this.assertBookingAccess(bookingId, allowedUserId);
 
-    return await this.paymentModel.find({ bookingId: new Types.ObjectId(bookingId) }).exec();
+    return await this.paymentModel.find({ bookingId: new Types.ObjectId(bookingId) }).sort({ createdAt: -1, _id: -1 }).exec();
   }
 
   private async assertBookingAccess(bookingId: string, allowedUserId?: string): Promise<BookingDocument> {

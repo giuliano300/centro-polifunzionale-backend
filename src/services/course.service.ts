@@ -7,6 +7,7 @@ import { UpdateCourseDto } from "src/dto/update-course.dto";
 import { Booking, BookingDocument } from "src/schemas/booking.schema";
 import { Payment, PaymentDocument } from "src/schemas/payment.schema";
 import { CourseBooking } from "src/schemas/course-booking.schema";
+import { NotificationsService } from "./notifications.service";
 
 type SearchableCourse = CourseDocument & {
   booking?: {
@@ -29,6 +30,7 @@ export class CourseService {
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
+    private notificationsService: NotificationsService,
   ) {}
 
   async create(dto: CreateCourseDto, managerId?: string): Promise<Course> {
@@ -39,11 +41,22 @@ export class CourseService {
       price: normalized.enrollmentType === 'free' ? 0 : normalized.price,
       isPublished: normalized.isPublished ?? true,
     });
-    return course.save();
+    const saved = await course.save();
+    const booking = await this.bookingModel.findById(saved.booking).populate('user').populate('space').exec();
+    const manager = booking?.user as unknown as { name?: string; email?: string } | undefined;
+    const space = booking?.space as unknown as { name?: string } | undefined;
+    await this.notificationsService.create({
+      audience: 'admin',
+      title: 'Nuovo corso creato',
+      message: `${manager?.name || manager?.email || 'Gestore'} ha creato "${saved.title}" in ${space?.name || 'uno spazio'} per il ${this.formatNotificationDate(saved.date)}.`,
+      type: 'course_created',
+      link: '/courses',
+    });
+    return saved;
   }
 
   private async validateCourseRules(dto: CreateCourseDto, courseId?: string, managerId?: string): Promise<CreateCourseDto> {
-    const booking = await this.bookingModel.findById(dto.booking).exec();
+    const booking = await this.bookingModel.findById(dto.booking).populate('space').exec();
     if (!booking) {
       throw new NotFoundException('Prenotazione spazio non trovata');
     }
@@ -59,6 +72,16 @@ export class CourseService {
 
     if (bookingDate < today) {
       throw new BadRequestException('Il corso puo essere creato solo per prenotazioni di oggi o future');
+    }
+
+    const space = booking.space as unknown as { courseCreationAdvanceHours?: number };
+    const advanceHours = Number(space?.courseCreationAdvanceHours ?? 2);
+    const bookingStart = this.bookingStartDate(booking.date, booking.startTime);
+    const creationDeadline = new Date(bookingStart.getTime() - (advanceHours * 60 * 60 * 1000));
+    const now = new Date();
+
+    if (now > creationDeadline) {
+      throw new BadRequestException(`Il corso puo essere creato solo fino a ${advanceHours} ore prima dell inizio della prenotazione`);
     }
 
     const duplicateQuery: FilterQuery<Course> = { booking: new Types.ObjectId(dto.booking) };
@@ -101,7 +124,7 @@ export class CourseService {
     if (filters.status === 'published') query.isPublished = true;
     if (filters.status === 'closed') query.isPublished = false;
 
-    let courses = await this.courseModel.find(query).populate({
+    let courses = await this.courseModel.find(query).sort({ _id: -1 }).populate({
       path: 'booking',
       populate: [
         { path: 'user' },
@@ -208,5 +231,16 @@ export class CourseService {
     await this.courseModel.findByIdAndDelete(id).exec();
     await this.courseBookingModel.deleteMany({ course: id });
     return { deleted: true };
+  }
+
+  private formatNotificationDate(value: string | Date): string {
+    return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
+  }
+
+  private bookingStartDate(dateValue: string | Date, startTime: string): Date {
+    const date = new Date(dateValue);
+    const [hours, minutes] = startTime.split(':').map(Number);
+    date.setHours(hours || 0, minutes || 0, 0, 0);
+    return date;
   }
 }

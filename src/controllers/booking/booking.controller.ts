@@ -69,6 +69,29 @@ export class BookingsController {
     return this.bookingsService.update(id, dto);
   }
 
+  @Post(':id/cancellation-request')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin','gestore','cliente')
+  async requestCancellation(@Param('id') id: string, @Req() req) {
+    const booking = await this.bookingsService.findOne(id);
+    const bookingUser = booking.user as PopulatedUserRef;
+    const bookingUserId = typeof bookingUser === 'string'
+      ? bookingUser
+      : bookingUser._id?.toString() || bookingUser.toString();
+    if (req.user.role !== 'admin' && bookingUserId !== req.user.userId) {
+      throw new ForbiddenException('Prenotazione non accessibile');
+    }
+
+    return this.bookingsService.requestCancellation(id);
+  }
+
+  @Post(':id/cancellation-approve')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  async approveCancellation(@Param('id') id: string, @Body() dto: { walletCreditAmount?: number }) {
+    return this.bookingsService.approveCancellation(id, Number(dto.walletCreditAmount || 0));
+  }
+
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin')

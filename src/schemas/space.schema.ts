@@ -39,6 +39,9 @@ export class Space {
   @Prop({ default: 1, min: 1 })
   workstationCount: number;
 
+  @Prop({ default: 2, min: 0 })
+  courseCreationAdvanceHours: number;
+
   @Prop({
     type: [{
       day: { type: Number, min: 0, max: 6, required: true },

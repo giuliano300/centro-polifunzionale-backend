@@ -11,6 +11,8 @@ import { CourseBookingModule } from './controllers/course-booking/course-booking
 import { CoursesModule } from './controllers/courses/courses.module';
 import { PaymentModule } from './controllers/payment/payment.module';
 import { DashboardModule } from './controllers/dashboard/dashboard.module';
+import { WalletModule } from './controllers/wallet/wallet.module';
+import { NotificationsModule } from './controllers/notifications/notifications.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -27,7 +29,9 @@ import { DashboardModule } from './controllers/dashboard/dashboard.module';
     CoursesModule,
     CourseBookingModule,
     PaymentModule,
-    DashboardModule
+    DashboardModule,
+    WalletModule,
+    NotificationsModule
   ],
   controllers: [AppController],
     providers: [AppService],

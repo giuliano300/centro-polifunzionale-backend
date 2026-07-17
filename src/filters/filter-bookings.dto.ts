@@ -29,5 +29,17 @@ export class FilterBookingsDto {
 
   @IsOptional()
   @IsString()
+  excludeStatus?: string;
+
+  @IsOptional()
+  @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsString()
+  page?: string;
+
+  @IsOptional()
+  @IsString()
+  limit?: string;
 }

@@ -5,6 +5,7 @@ import { CourseBooking } from 'src/schemas/course-booking.schema';
 import { CreateCourseBookingDto } from 'src/dto/create-course-booking.dto';
 import { FilterCourseBookingDto } from 'src/filters/filter-course-booking.dto';
 import { Course, CourseDocument } from 'src/schemas/course.schema';
+import { NotificationsService } from './notifications.service';
 
 type PopulatedCourseBooking = CourseBooking & {
   course?: {
@@ -19,6 +20,7 @@ export class CourseBookingsService {
   constructor(
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
     @InjectModel(Course.name) private courseModel: Model<CourseDocument>,
+    private notificationsService: NotificationsService,
   ) {}
 
   async create(dto: CreateCourseBookingDto, userId: string): Promise<CourseBooking> {
@@ -55,7 +57,39 @@ export class CourseBookingsService {
       amount: course.enrollmentType === 'free' ? 0 : course.price,
       paymentStatus: course.enrollmentType === 'free' ? 'FREE' : 'PENDING',
     });
-    return booking.save();
+    const saved = await booking.save();
+    const populated = await this.courseBookingModel.findById((saved as unknown as { _id: Types.ObjectId })._id)
+      .populate('user')
+      .populate({
+        path: 'course',
+        populate: {
+          path: 'booking',
+          populate: [
+            { path: 'user' },
+            { path: 'space' },
+          ],
+        },
+      })
+      .exec() as unknown as {
+        user?: { name?: string; email?: string };
+        course?: {
+          booking?: {
+            user?: { name?: string; email?: string };
+            space?: { name?: string };
+          };
+        };
+      } | null;
+    const subscriber = populated?.user;
+    const manager = populated?.course?.booking?.user;
+    const space = populated?.course?.booking?.space;
+    await this.notificationsService.create({
+      audience: 'admin',
+      title: 'Nuova iscrizione corso',
+      message: `${subscriber?.name || subscriber?.email || 'Cliente'} si e iscritto a "${course.title}" di ${manager?.name || manager?.email || 'Gestore'} in ${space?.name || 'uno spazio'} per il ${this.formatNotificationDate(course.date)}.`,
+      type: 'course_booking_created',
+      link: '/course-bookings',
+    });
+    return saved;
   }
 
   async findAll(filters: FilterCourseBookingDto & { managerId?: string }): Promise<CourseBooking[]> {
@@ -63,7 +97,7 @@ export class CourseBookingsService {
     if (filters.userId) query.user = new Types.ObjectId(filters.userId);
     if (filters.courseId) query.course = new Types.ObjectId(filters.courseId);
     if (filters.status) query.status = filters.status;
-    let courseBookings = await this.courseBookingModel.find(query).populate('user').populate({
+    let courseBookings = await this.courseBookingModel.find(query).sort({ createdAt: -1, _id: -1 }).populate('user').populate({
       path: 'course',
       populate: {
         path: 'booking',
@@ -99,5 +133,9 @@ export class CourseBookingsService {
 
     await this.courseBookingModel.findByIdAndDelete(id).exec();
     return { deleted: true };
+  }
+
+  private formatNotificationDate(value: string | Date): string {
+    return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
   }
 }

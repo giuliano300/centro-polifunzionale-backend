@@ -6,6 +6,8 @@ import { BookingService } from '../../services/booking.service';
 import { User, UserSchema } from "src/schemas/user.schema";
 import { Space, SpaceSchema } from "src/schemas/space.schema";
 import { Payment, PaymentSchema } from "src/schemas/payment.schema";
+import { WalletModule } from "../wallet/wallet.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 
 @Module({
@@ -13,7 +15,9 @@ import { Payment, PaymentSchema } from "src/schemas/payment.schema";
     MongooseModule.forFeature([{ name: Booking.name, schema: BookingSchema }]),
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     MongooseModule.forFeature([{ name: Space.name, schema: SpaceSchema }]),
-    MongooseModule.forFeature([{ name: Payment.name, schema: PaymentSchema }])
+    MongooseModule.forFeature([{ name: Payment.name, schema: PaymentSchema }]),
+    WalletModule,
+    NotificationsModule
   ],
   controllers: [BookingsController],
   providers: [BookingService],

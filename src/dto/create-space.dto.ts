@@ -70,6 +70,12 @@ export class CreateSpaceDto {
   @Min(1)
   workstationCount?: number;
 
+  @ApiProperty({ example: 2, description: 'Ore prima dell inizio prenotazione oltre cui non e piu possibile creare un corso', required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  courseCreationAdvanceHours?: number;
+
   @ApiProperty({ description: 'Orari settimanali di apertura e chiusura', required: false })
   @IsOptional()
   @IsArray()

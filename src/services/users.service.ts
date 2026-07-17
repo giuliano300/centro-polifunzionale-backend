@@ -45,7 +45,7 @@ export class UsersService {
   }
 
   async findAll(filterDto: GetUsersFilterDto): Promise<User[]> {
-    const { email, role, excludeRole, search, limit = 10, page = 1, sortBy = 'email', sortOrder = 'asc' } = filterDto;
+    const { email, role, excludeRole, search, limit = 10, page = 1, sortBy = '_id', sortOrder = 'desc' } = filterDto;
 
     const filter: Record<string, unknown> = {};    
     if (email) filter.email = email;
@@ -76,6 +76,18 @@ export class UsersService {
     }
     return user;
   }
+
+  async updateSelf(id: string, dto: UpdateUserDto): Promise<User> {
+    const allowedDto: UpdateUserDto = {
+      name: dto.name,
+      phone: dto.phone,
+      taxCode: dto.taxCode,
+      password: dto.password,
+    };
+
+    return this.update(id, allowedDto);
+  }
+
   async update(id: string, dto: UpdateUserDto): Promise<User> {
     const current = await this.findById(id);
     if (current.role === 'admin' && dto.isActive === false) {
