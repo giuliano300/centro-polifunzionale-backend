@@ -64,6 +64,12 @@ export class CreateSpaceDto {
   @Min(15)
   timeSlotMinutes?: number;
 
+  @ApiProperty({ example: 1, description: 'Numero massimo di frazioni consecutive acquistabili contemporaneamente', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxConsecutiveTimeSlots?: number;
+
   @ApiProperty({ example: 8, description: 'Numero postazioni disponibili se coworking', required: false })
   @IsOptional()
   @IsInt()

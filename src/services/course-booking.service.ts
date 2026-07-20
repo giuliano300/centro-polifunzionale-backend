@@ -6,6 +6,7 @@ import { CreateCourseBookingDto } from 'src/dto/create-course-booking.dto';
 import { FilterCourseBookingDto } from 'src/filters/filter-course-booking.dto';
 import { Course, CourseDocument } from 'src/schemas/course.schema';
 import { NotificationsService } from './notifications.service';
+import { WalletService } from './wallet.service';
 
 type PopulatedCourseBooking = CourseBooking & {
   course?: {
@@ -21,6 +22,7 @@ export class CourseBookingsService {
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
     @InjectModel(Course.name) private courseModel: Model<CourseDocument>,
     private notificationsService: NotificationsService,
+    private walletService: WalletService,
   ) {}
 
   async create(dto: CreateCourseBookingDto, userId: string): Promise<CourseBooking> {
@@ -49,15 +51,31 @@ export class CourseBookingsService {
       throw new BadRequestException('Posti corso esauriti');
     }
 
+    const totalAmount = course.enrollmentType === 'free' ? 0 : course.price;
+    const walletBalance = totalAmount > 0 ? Math.max(await this.walletService.balance(targetUserId), 0) : 0;
+    const walletAmount = Math.min(walletBalance, totalAmount);
+    const externalAmount = Math.max(totalAmount - walletAmount, 0);
+
     const booking = new this.courseBookingModel({
       user: new Types.ObjectId(targetUserId),
       course: new Types.ObjectId(dto.courseId),
-      status: course.enrollmentType === 'free' ? 'confirmed' : 'pending',
+      status: course.enrollmentType === 'free' || externalAmount <= 0 ? 'confirmed' : 'pending',
       enrollmentType: course.enrollmentType,
-      amount: course.enrollmentType === 'free' ? 0 : course.price,
-      paymentStatus: course.enrollmentType === 'free' ? 'FREE' : 'PENDING',
+      amount: externalAmount,
+      totalAmount,
+      walletAmount,
+      externalAmount,
+      paymentStatus: course.enrollmentType === 'free' ? 'FREE' : externalAmount <= 0 ? 'PAID' : 'PENDING',
     });
     const saved = await booking.save();
+    if (walletAmount > 0) {
+      await this.walletService.debitCoursePayment(
+        targetUserId,
+        (saved as unknown as { _id: Types.ObjectId })._id.toString(),
+        walletAmount,
+        `Utilizzo wallet per iscrizione al corso ${course.title}`,
+      );
+    }
     const populated = await this.courseBookingModel.findById((saved as unknown as { _id: Types.ObjectId })._id)
       .populate('user')
       .populate({

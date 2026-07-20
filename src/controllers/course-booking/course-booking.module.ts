@@ -5,6 +5,7 @@ import { CourseBookingsService } from "src/services/course-booking.service";
 import { CourseBooking, CourseBookingSchema } from "src/schemas/course-booking.schema";
 import { Course, CourseSchema } from "src/schemas/course.schema";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { WalletModule } from "../wallet/wallet.module";
 
 
 @Module({
@@ -13,7 +14,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
       { name: CourseBooking.name, schema: CourseBookingSchema },
       { name: Course.name, schema: CourseSchema }
     ]),
-    NotificationsModule
+    NotificationsModule,
+    WalletModule
   ],
   controllers: [CourseBookingsController],
   providers: [CourseBookingsService],

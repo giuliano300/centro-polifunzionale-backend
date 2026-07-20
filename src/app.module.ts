@@ -13,6 +13,7 @@ import { PaymentModule } from './controllers/payment/payment.module';
 import { DashboardModule } from './controllers/dashboard/dashboard.module';
 import { WalletModule } from './controllers/wallet/wallet.module';
 import { NotificationsModule } from './controllers/notifications/notifications.module';
+import { SystemSettingsModule } from './controllers/system-settings/system-settings.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -31,7 +32,8 @@ import { NotificationsModule } from './controllers/notifications/notifications.m
     PaymentModule,
     DashboardModule,
     WalletModule,
-    NotificationsModule
+    NotificationsModule,
+    SystemSettingsModule
   ],
   controllers: [AppController],
     providers: [AppService],

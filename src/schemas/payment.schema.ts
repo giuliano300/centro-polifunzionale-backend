@@ -9,6 +9,15 @@ export class Payment extends Document {
   @Prop({ required: true })
   amount: number;
 
+  @Prop({ required: true, default: 0 })
+  totalAmount: number;
+
+  @Prop({ required: true, default: 0 })
+  walletAmount: number;
+
+  @Prop({ required: true, default: 0 })
+  externalAmount: number;
+
   @Prop({ required: true, enum: ['PENDING', 'PAID', 'FAILED'], default: 'PENDING' })
   status: 'PENDING' | 'PAID' | 'FAILED';
 

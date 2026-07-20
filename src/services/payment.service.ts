@@ -45,12 +45,20 @@ export class PaymentService {
 
     if (existingPending && createPaymentDto.status === 'PENDING') {
       existingPending.amount = createPaymentDto.amount;
+      existingPending.totalAmount = existingPending.totalAmount || createPaymentDto.amount;
+      existingPending.externalAmount = createPaymentDto.amount;
+      existingPending.walletAmount = existingPending.walletAmount || 0;
       existingPending.method = createPaymentDto.method;
       existingPending.transactionId = createPaymentDto.transactionId;
       return existingPending.save();
     }
 
-    const payment = await this.paymentModel.create(createPaymentDto);
+    const payment = await this.paymentModel.create({
+      ...createPaymentDto,
+      totalAmount: createPaymentDto.amount,
+      walletAmount: 0,
+      externalAmount: createPaymentDto.amount,
+    });
     return payment;
   }
 
@@ -86,9 +94,15 @@ export class PaymentService {
     const payment = pending || new this.paymentModel({
       bookingId: bookingObjectId,
       amount,
+      totalAmount: amount,
+      walletAmount: 0,
+      externalAmount: amount,
     });
 
     payment.amount = amount;
+    payment.externalAmount = amount;
+    payment.totalAmount = payment.totalAmount || amount;
+    payment.walletAmount = payment.walletAmount || 0;
     payment.status = 'PAID';
     payment.method = options.method || 'manual';
     payment.transactionId = options.transactionId || `MANUAL-${Date.now()}`;
@@ -124,6 +138,9 @@ export class PaymentService {
 
     payment.provider = provider;
     payment.method = provider;
+    payment.externalAmount = amount;
+    payment.totalAmount = payment.totalAmount || amount;
+    payment.walletAmount = payment.walletAmount || 0;
     payment.transactionId = checkout.transactionId;
     payment.checkoutUrl = checkout.checkoutUrl;
     payment.providerPayload = checkout.providerPayload ? JSON.stringify(checkout.providerPayload) : undefined;

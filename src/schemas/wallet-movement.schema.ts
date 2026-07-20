@@ -11,8 +11,8 @@ export class WalletMovement extends Document {
   @Prop({ required: true, enum: ['credit', 'debit'] })
   type: 'credit' | 'debit';
 
-  @Prop({ required: true, enum: ['cancellation_refund', 'booking_payment', 'manual'] })
-  reason: 'cancellation_refund' | 'booking_payment' | 'manual';
+  @Prop({ required: true, enum: ['cancellation_refund', 'booking_payment', 'course_payment', 'signup_bonus', 'manual'] })
+  reason: 'cancellation_refund' | 'booking_payment' | 'course_payment' | 'signup_bonus' | 'manual';
 
   @Prop({ required: true, min: 0 })
   amount: number;
@@ -22,6 +22,9 @@ export class WalletMovement extends Document {
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Booking' })
   booking?: Booking;
+
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'CourseBooking' })
+  courseBooking?: mongoose.Types.ObjectId;
 
   @Prop()
   description?: string;

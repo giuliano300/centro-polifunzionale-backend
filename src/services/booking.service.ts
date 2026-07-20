@@ -61,12 +61,35 @@ export class BookingService {
       workstationQuantity: createBookingDto.workstationQuantity || 1,
     });
     const savedBooking = await booking.save();
+
+    const walletBalance = Math.max(await this.walletService.balance(createBookingDto.userId || userId), 0);
+    const walletAmount = Math.min(walletBalance, amount);
+    const externalAmount = Math.max(amount - walletAmount, 0);
+
+    if (walletAmount > 0) {
+      await this.walletService.debitBookingPayment(
+        createBookingDto.userId || userId,
+        (savedBooking._id as Types.ObjectId).toString(),
+        walletAmount,
+        `Utilizzo wallet per prenotazione ${savedBooking.name || savedBooking._id}`,
+      );
+    }
+
     await this.paymentModel.create({
       bookingId: savedBooking._id,
-      amount,
-      status: 'PENDING',
-      method: 'manual',
+      amount: externalAmount,
+      totalAmount: amount,
+      walletAmount,
+      externalAmount,
+      status: externalAmount <= 0 ? 'PAID' : 'PENDING',
+      method: externalAmount <= 0 ? 'wallet' : 'manual',
+      provider: 'manual',
+      transactionId: externalAmount <= 0 ? `WALLET-${Date.now()}` : undefined,
     });
+    if (externalAmount <= 0) {
+      savedBooking.status = 'confirmed';
+      await savedBooking.save();
+    }
     const manager = await this.userModel.findById(createBookingDto.userId || userId).exec();
     await this.notificationsService.create({
       audience: 'admin',
@@ -224,6 +247,12 @@ export class BookingService {
     const slotMinutes = space.timeSlotMinutes || 60;
     if ((normalizedStart - open) % slotMinutes !== 0 || (normalizedEnd - normalizedStart) % slotMinutes !== 0) {
       throw new BadRequestException(`Questo spazio si prenota a frazioni di ${slotMinutes} minuti`);
+    }
+
+    const requestedSlots = Math.ceil((normalizedEnd - normalizedStart) / slotMinutes);
+    const maxConsecutiveTimeSlots = space.maxConsecutiveTimeSlots || 1;
+    if (requestedSlots > maxConsecutiveTimeSlots) {
+      throw new BadRequestException(`Puoi acquistare al massimo ${maxConsecutiveTimeSlots} fasce consecutive per questo spazio`);
     }
 
     if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
@@ -398,7 +427,7 @@ export class BookingService {
 
     const bookings = await this.bookingModel
       .find(query)
-      .sort({ createdAt: -1, _id: -1 })
+      .sort({ date: -1, startTime: -1, _id: -1 })
       .populate('user')
       .populate('space')
       .exec();
@@ -446,11 +475,11 @@ export class BookingService {
   }
 
   async findByUser(userId: string): Promise<Booking[]> {
-    return this.bookingModel.find({ user: userId }).sort({ createdAt: -1, _id: -1 }).populate('space').exec();
+    return this.bookingModel.find({ user: userId }).sort({ date: -1, startTime: -1, _id: -1 }).populate('space').exec();
   }
 
   async findBySpace(spaceId: string): Promise<Booking[]> {
-    return this.bookingModel.find({ space: spaceId }).sort({ createdAt: -1, _id: -1 }).populate('user').exec();
+    return this.bookingModel.find({ space: spaceId }).sort({ date: -1, startTime: -1, _id: -1 }).populate('user').exec();
   }
 
   async findOne(id: string): Promise<Booking> {
@@ -514,15 +543,15 @@ export class BookingService {
 
     const paidPayment = await this.paymentModel.findOne({ bookingId: booking._id, status: 'PAID' }).exec();
     const fallbackPayment = await this.paymentModel.findOne({ bookingId: booking._id }).sort({ createdAt: 1 }).exec();
-    const paidAmount = paidPayment?.amount || fallbackPayment?.amount || 0;
+    const paidAmount = paidPayment?.totalAmount || paidPayment?.amount || fallbackPayment?.totalAmount || fallbackPayment?.amount || 0;
     const creditAmount = Number(walletCreditAmount || 0);
 
     if (creditAmount < 0) {
-      throw new BadRequestException('Il credito portafogli non puo essere negativo');
+      throw new BadRequestException('Il credito wallet non puo essere negativo');
     }
 
     if (creditAmount > paidAmount) {
-      throw new BadRequestException('Il credito portafogli non puo superare l importo pagato');
+      throw new BadRequestException('Il credito wallet non puo superare l importo pagato');
     }
 
     const bookingUser = booking.user as unknown as { _id?: { toString(): string }; toString(): string };

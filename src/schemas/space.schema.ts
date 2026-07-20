@@ -37,6 +37,9 @@ export class Space {
   timeSlotMinutes: number;
 
   @Prop({ default: 1, min: 1 })
+  maxConsecutiveTimeSlots: number;
+
+  @Prop({ default: 1, min: 1 })
   workstationCount: number;
 
   @Prop({ default: 2, min: 0 })
