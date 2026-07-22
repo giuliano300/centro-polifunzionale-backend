@@ -18,6 +18,15 @@ export class Payment extends Document {
   @Prop({ required: true, default: 0 })
   externalAmount: number;
 
+  @Prop({ default: 0 })
+  originalAmount: number;
+
+  @Prop({ default: 0 })
+  discountAmount: number;
+
+  @Prop()
+  discountCode?: string;
+
   @Prop({ required: true, enum: ['PENDING', 'PAID', 'FAILED'], default: 'PENDING' })
   status: 'PENDING' | 'PAID' | 'FAILED';
 

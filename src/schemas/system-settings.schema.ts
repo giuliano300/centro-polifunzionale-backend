@@ -8,6 +8,12 @@ export class SystemSettings extends Document {
 
   @Prop({ required: true, default: 0, min: 0 })
   newUserWalletCredit: number;
+
+  @Prop({ required: true, default: 0, min: 0 })
+  newClientWalletCredit: number;
+
+  @Prop({ required: true, default: 0, min: 0 })
+  newManagerWalletCredit: number;
 }
 
 export type SystemSettingsDocument = SystemSettings & Document;

@@ -123,6 +123,20 @@ export class WalletService {
     });
   }
 
+  async cancellationRefundAmountByBooking(bookingId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(bookingId)) {
+      return 0;
+    }
+
+    const movement = await this.walletMovementModel.findOne({
+      booking: new Types.ObjectId(bookingId),
+      reason: 'cancellation_refund',
+      type: 'credit',
+    }).exec();
+
+    return movement?.amount || 0;
+  }
+
   async balance(userId: string): Promise<number> {
     const movements = await this.walletMovementModel
       .find({ user: new Types.ObjectId(userId) })

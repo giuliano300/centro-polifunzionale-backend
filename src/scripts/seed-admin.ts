@@ -1,6 +1,7 @@
 import * as bcrypt from 'bcrypt';
 import mongoose from 'mongoose';
 import { UserSchema } from '../schemas/user.schema';
+import { UserRole } from '../roles/user-role.enum';
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/centro-db';
 const email = process.env.ADMIN_EMAIL || 'admin@centro.local';
@@ -18,7 +19,7 @@ async function seedAdmin() {
     existing.set({
       name,
       password: hashedPassword,
-      role: 'admin',
+      role: UserRole.Admin,
     });
     await existing.save();
     console.log(`Admin aggiornato: ${email}`);
@@ -27,7 +28,7 @@ async function seedAdmin() {
       name,
       email,
       password: hashedPassword,
-      role: 'admin',
+      role: UserRole.Admin,
     });
     console.log(`Admin creato: ${email}`);
   }

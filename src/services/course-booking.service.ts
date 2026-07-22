@@ -5,12 +5,15 @@ import { CourseBooking } from 'src/schemas/course-booking.schema';
 import { CreateCourseBookingDto } from 'src/dto/create-course-booking.dto';
 import { FilterCourseBookingDto } from 'src/filters/filter-course-booking.dto';
 import { Course, CourseDocument } from 'src/schemas/course.schema';
+import { User, UserDocument } from 'src/schemas/user.schema';
 import { NotificationsService } from './notifications.service';
 import { WalletService } from './wallet.service';
+import { DiscountCodeService } from './discount-code.service';
 
 type PopulatedCourseBooking = CourseBooking & {
   course?: {
     booking?: {
+      status?: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled';
       user?: { _id?: string } | string;
     };
   };
@@ -21,15 +24,26 @@ export class CourseBookingsService {
   constructor(
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
     @InjectModel(Course.name) private courseModel: Model<CourseDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private notificationsService: NotificationsService,
     private walletService: WalletService,
+    private discountCodeService: DiscountCodeService,
   ) {}
 
   async create(dto: CreateCourseBookingDto, userId: string): Promise<CourseBooking> {
     const targetUserId = dto.userId || userId;
-    const course = await this.courseModel.findById(dto.courseId).exec();
+    const course = await this.courseModel.findById(dto.courseId).populate('booking').exec();
     if (!course) {
       throw new NotFoundException('Corso non trovato');
+    }
+
+    const spaceBooking = course.booking as unknown as { status?: string; space?: { toString(): string } | string } | undefined;
+    if (spaceBooking?.status === 'cancelled') {
+      throw new BadRequestException('Non puoi iscriverti a un corso collegato a una prenotazione annullata');
+    }
+
+    if (spaceBooking?.status === 'cancellation_requested') {
+      throw new BadRequestException('Non puoi iscriverti mentre la prenotazione dello spazio e in richiesta di annullamento');
     }
 
     const existing = await this.courseBookingModel.findOne({
@@ -51,7 +65,18 @@ export class CourseBookingsService {
       throw new BadRequestException('Posti corso esauriti');
     }
 
-    const totalAmount = course.enrollmentType === 'free' ? 0 : course.price;
+    const user = await this.userModel.findById(targetUserId).exec();
+    const monthlyPurchaseCount = await this.monthlyCoursePurchaseCount(targetUserId, course.date);
+    const originalAmount = course.enrollmentType === 'free' ? 0 : course.price;
+    const courseSpaceId = typeof spaceBooking?.space === 'string'
+      ? spaceBooking.space
+      : spaceBooking?.space?.toString();
+    const discount = await this.discountCodeService.apply(dto.discountCode, 'course', originalAmount, courseSpaceId, course.date, {
+      role: user?.role,
+      createdAt: (user as unknown as { createdAt?: Date })?.createdAt,
+      monthlyPurchaseCount,
+    });
+    const totalAmount = Math.max(originalAmount - discount.amount, 0);
     const walletBalance = totalAmount > 0 ? Math.max(await this.walletService.balance(targetUserId), 0) : 0;
     const walletAmount = Math.min(walletBalance, totalAmount);
     const externalAmount = Math.max(totalAmount - walletAmount, 0);
@@ -65,9 +90,13 @@ export class CourseBookingsService {
       totalAmount,
       walletAmount,
       externalAmount,
+      originalAmount,
+      discountAmount: discount.amount,
+      discountCode: discount.code,
       paymentStatus: course.enrollmentType === 'free' ? 'FREE' : externalAmount <= 0 ? 'PAID' : 'PENDING',
     });
     const saved = await booking.save();
+    await this.discountCodeService.markUsed(discount.code);
     if (walletAmount > 0) {
       await this.walletService.debitCoursePayment(
         targetUserId,
@@ -136,6 +165,12 @@ export class CourseBookingsService {
       });
     }
 
+    courseBookings = courseBookings.filter((item) => {
+      const course = item.course || null;
+      const status = typeof course?.booking === 'string' ? null : course?.booking?.status;
+      return status !== 'cancelled' && status !== 'cancellation_requested';
+    });
+
     return courseBookings as unknown as CourseBooking[];
   }
 
@@ -155,5 +190,16 @@ export class CourseBookingsService {
 
   private formatNotificationDate(value: string | Date): string {
     return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
+  }
+
+  private async monthlyCoursePurchaseCount(userId: string, date: string | Date): Promise<number> {
+    const target = new Date(date);
+    const start = new Date(target.getFullYear(), target.getMonth(), 1);
+    const end = new Date(target.getFullYear(), target.getMonth() + 1, 1);
+    return this.courseBookingModel.countDocuments({
+      user: new Types.ObjectId(userId),
+      createdAt: { $gte: start, $lt: end },
+      status: { $ne: 'cancelled' },
+    }).exec();
   }
 }

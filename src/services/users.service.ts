@@ -8,6 +8,10 @@ import { UpdateUserDto } from 'src/dto/update-user.dto';
 import { GetUsersFilterDto } from 'src/filters/get-user-filters.dto';
 import { WalletService } from './wallet.service';
 import { SystemSettingsService } from './system-settings.service';
+import { UserRole } from 'src/roles/user-role.enum';
+import { InviteClientDto, CompleteClientInviteDto } from 'src/dto/client-invite.dto';
+import { randomBytes } from 'crypto';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UsersService {
@@ -15,20 +19,24 @@ export class UsersService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private walletService: WalletService,
     private systemSettingsService: SystemSettingsService,
+    private configService: ConfigService,
   ) {}
 
   async create(createUserDto: CreateUserDto): Promise<User> {
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
     const normalizedUser = this.normalizeOptionalIdentityFields(createUserDto);
     this.validateTaxCode(normalizedUser.taxCode);
+    this.validateItalianMobilePhone(normalizedUser.phone);
+    await this.assertUniqueIdentity(normalizedUser.email, normalizedUser.phone, normalizedUser.taxCode);
+    const hashedPassword = await bcrypt.hash(normalizedUser.password, 10);
     const createdUser = new this.userModel({
       ...normalizedUser,
       password: hashedPassword,
-      role: normalizedUser.role || 'cliente'
+      role: normalizedUser.role || UserRole.Cliente,
+      registrationStatus: 'complete',
     });
     const savedUser = await createdUser.save();
-    if (savedUser.role !== 'admin') {
-      const credit = await this.systemSettingsService.newUserWalletCredit();
+    if (savedUser.role !== UserRole.Admin) {
+      const credit = await this.systemSettingsService.newUserWalletCredit(savedUser.role);
       if (credit > 0) {
         await this.walletService.creditSignupBonus(
           (savedUser._id as Types.ObjectId).toString(),
@@ -41,7 +49,45 @@ export class UsersService {
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return await this.userModel.findOne({ email }).exec();
+    return await this.userModel.findOne({ email: email.trim().toLowerCase() }).exec();
+  }
+
+  async assertUniqueIdentity(email?: string, phone?: string, taxCode?: string): Promise<void> {
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPhone = phone?.trim();
+    const normalizedTaxCode = taxCode?.trim().toUpperCase();
+    const or: Record<string, string>[] = [];
+
+    if (normalizedEmail) {
+      or.push({ email: normalizedEmail });
+    }
+    if (normalizedPhone) {
+      or.push({ phone: normalizedPhone });
+    }
+    if (normalizedTaxCode) {
+      or.push({ taxCode: normalizedTaxCode });
+    }
+
+    if (!or.length) {
+      return;
+    }
+
+    const existing = await this.userModel.findOne({ $or: or }).exec();
+    if (!existing) {
+      return;
+    }
+
+    if (normalizedEmail && existing.email === normalizedEmail) {
+      throw new BadRequestException('Email gia registrata');
+    }
+    if (normalizedPhone && existing.phone === normalizedPhone) {
+      throw new BadRequestException('Cellulare gia registrato');
+    }
+    if (normalizedTaxCode && existing.taxCode === normalizedTaxCode) {
+      throw new BadRequestException('Codice fiscale gia registrato');
+    }
+
+    throw new BadRequestException('Utente gia registrato');
   }
 
   async resetPasswordByEmail(email: string, password: string, allowedRoles?: string[]): Promise<{ updated: boolean }> {
@@ -93,6 +139,81 @@ export class UsersService {
     return user;
   }
 
+  async inviteClient(dto: InviteClientDto, invitedBy: string): Promise<{ user: User; completeUrl: string; sent: boolean }> {
+    return this.inviteUser(dto, invitedBy);
+  }
+
+  async inviteUser(dto: InviteClientDto & { role?: UserRole }, invitedBy: string): Promise<{ user: User; completeUrl: string; sent: boolean }> {
+    const normalized = this.normalizeOptionalIdentityFields({ ...dto, email: dto.email.trim().toLowerCase() });
+    this.validateTaxCode(normalized.taxCode);
+    this.validateItalianMobilePhone(normalized.phone);
+    await this.assertUniqueIdentity(normalized.email, normalized.phone, normalized.taxCode);
+
+    const token = randomBytes(32).toString('hex');
+    const user = await this.userModel.create({
+      ...normalized,
+      password: await bcrypt.hash(this.randomPasswordPlaceholder(), 10),
+      role: dto.role === UserRole.Gestore ? UserRole.Gestore : UserRole.Cliente,
+      isActive: false,
+      registrationStatus: 'invited',
+      invitedBy: new Types.ObjectId(invitedBy),
+      completionTokenHash: await bcrypt.hash(token, 10),
+      completionTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    return {
+      user,
+      completeUrl: `${this.configService.get<string>('GESTORE_FRONTEND_URL', 'http://localhost:4400').replace(/\/$/, '')}/complete-registration?token=${encodeURIComponent(token)}`,
+      sent: false,
+    };
+  }
+
+  async completeClientInvite(dto: CompleteClientInviteDto): Promise<{ completed: boolean; user: User }> {
+    const requests = await this.userModel.find({
+      role: { $in: [UserRole.Cliente, UserRole.Gestore] },
+      registrationStatus: 'invited',
+      isActive: false,
+      completionTokenExpiresAt: { $gt: new Date() },
+    }).exec();
+
+    for (const user of requests) {
+      if (!user.completionTokenHash || !await bcrypt.compare(dto.token, user.completionTokenHash)) {
+        continue;
+      }
+
+      const normalized = this.normalizeOptionalIdentityFields({
+        name: dto.name,
+        phone: dto.phone || user.phone,
+        taxCode: dto.taxCode || user.taxCode,
+      });
+      this.validateTaxCode(normalized.taxCode);
+      this.validateItalianMobilePhone(normalized.phone);
+
+      user.name = normalized.name;
+      user.phone = normalized.phone;
+      user.taxCode = normalized.taxCode;
+      user.password = await bcrypt.hash(dto.password, 10);
+      user.isActive = true;
+      user.registrationStatus = 'complete';
+      user.completionTokenHash = undefined;
+      user.completionTokenExpiresAt = undefined;
+      const saved = await user.save();
+
+      const credit = await this.systemSettingsService.newUserWalletCredit(saved.role);
+      if (credit > 0) {
+        await this.walletService.creditSignupBonus(
+          (saved._id as Types.ObjectId).toString(),
+          credit,
+          'Premio completamento registrazione cliente',
+        );
+      }
+
+      return { completed: true, user: saved };
+    }
+
+    throw new BadRequestException('Link registrazione scaduto o non valido');
+  }
+
   async updateSelf(id: string, dto: UpdateUserDto): Promise<User> {
     const allowedDto: UpdateUserDto = {
       name: dto.name,
@@ -106,7 +227,7 @@ export class UsersService {
 
   async update(id: string, dto: UpdateUserDto): Promise<User> {
     const current = await this.findById(id);
-    if (current.role === 'admin' && dto.isActive === false) {
+    if (current.role === UserRole.Admin && dto.isActive === false) {
       throw new BadRequestException('Non puoi disattivare un amministratore');
     }
 
@@ -115,6 +236,7 @@ export class UsersService {
     }
     const normalizedDto = this.normalizeOptionalIdentityFields(dto);
     this.validateTaxCode(normalizedDto.taxCode);
+    this.validateItalianMobilePhone(normalizedDto.phone);
 
     const updated = await this.userModel.findByIdAndUpdate(id, normalizedDto, {
       new: true,
@@ -130,7 +252,7 @@ export class UsersService {
   // users.service.ts
   async remove(id: string): Promise<{ deleted: boolean }> {
     const current = await this.findById(id);
-    if (current.role === 'admin') {
+    if (current.role === UserRole.Admin) {
       throw new BadRequestException('Non puoi eliminare un amministratore');
     }
 
@@ -141,8 +263,14 @@ export class UsersService {
     return { deleted: true };
   }
 
-  private normalizeOptionalIdentityFields<T extends { phone?: string; taxCode?: string }>(dto: T): T {
+  private normalizeOptionalIdentityFields<T extends { email?: string; phone?: string; taxCode?: string }>(dto: T): T {
     const normalized = { ...dto };
+    if (normalized.email) {
+      normalized.email = normalized.email.trim().toLowerCase();
+    }
+    if (normalized.phone) {
+      normalized.phone = this.normalizeItalianMobilePhone(normalized.phone);
+    }
     if (normalized.phone === '') {
       delete normalized.phone;
     }
@@ -153,6 +281,24 @@ export class UsersService {
       normalized.taxCode = normalized.taxCode.toUpperCase();
     }
     return normalized;
+  }
+
+  private normalizeItalianMobilePhone(phone: string): string {
+    return phone.replace(/[\s./()-]/g, '');
+  }
+
+  private randomPasswordPlaceholder(): string {
+    return `Tmp${Math.random().toString(36).slice(2, 10)}!`;
+  }
+
+  private validateItalianMobilePhone(phone?: string): void {
+    if (!phone) {
+      return;
+    }
+
+    if (!/^3[0-9]{8,9}$/.test(phone)) {
+      throw new BadRequestException('Cellulare italiano non valido: inserisci 9 o 10 cifre senza prefisso');
+    }
   }
 
   private validateTaxCode(taxCode?: string): void {

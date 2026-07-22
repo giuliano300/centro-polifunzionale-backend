@@ -4,7 +4,7 @@ import { ConfirmPaymentDto } from "../../dto/confirm-payment.dto";
 import { CreateCheckoutDto } from "../../dto/create-checkout.dto";
 import { PaymentService } from "../../services/payment.service";
 import { AuthGuard } from "@nestjs/passport";
-import { Roles } from "src/roles/roles.decorator";
+import { Roles, UserRole } from "src/roles/roles.decorator";
 import { RolesGuard } from "src/roles/roles.guard";
 
 @Controller('payments')
@@ -13,7 +13,7 @@ export class PaymentController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
+  @Roles(UserRole.Admin, UserRole.Gestore)
   async create(@Body() dto: CreatePaymentDto, @Req() req) {
     if (dto.status === 'PAID') {
       return await this.paymentService.confirmBookingPayment(
@@ -23,7 +23,7 @@ export class PaymentController {
           method: dto.method,
           transactionId: dto.transactionId,
         },
-        req.user.role === 'gestore' ? req.user.userId : undefined,
+        req.user.role === UserRole.Gestore ? req.user.userId : undefined,
       );
     }
 
@@ -32,7 +32,7 @@ export class PaymentController {
 
   @Post('booking/:bookingId/confirm')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
+  @Roles(UserRole.Admin, UserRole.Gestore)
   async confirmBookingPayment(
     @Param('bookingId') bookingId: string,
     @Body() dto: ConfirmPaymentDto,
@@ -45,13 +45,13 @@ export class PaymentController {
         method: dto.method || 'manual',
         transactionId: dto.transactionId,
       },
-      req.user.role === 'gestore' ? req.user.userId : undefined,
+      req.user.role === UserRole.Gestore ? req.user.userId : undefined,
     );
   }
 
   @Post('booking/:bookingId/checkout')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore','cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async createCheckout(
     @Param('bookingId') bookingId: string,
     @Body() dto: CreateCheckoutDto,
@@ -64,13 +64,26 @@ export class PaymentController {
         successUrl: dto.successUrl,
         cancelUrl: dto.cancelUrl,
       },
-      req.user.role === 'admin' ? undefined : req.user.userId,
+      req.user.role === UserRole.Admin ? undefined : req.user.userId,
+    );
+  }
+
+  @Post('booking/:bookingId/send-payment-link')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async sendPaymentLink(
+    @Param('bookingId') bookingId: string,
+    @Req() req,
+  ) {
+    return await this.paymentService.sendBookingPaymentLink(
+      bookingId,
+      req.user.role === UserRole.Gestore ? req.user.userId : undefined,
     );
   }
 
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore')
+  @Roles(UserRole.Admin, UserRole.Gestore)
   async findAll(
     @Query('status') status?: string,
     @Query('start') start?: string,
@@ -83,17 +96,17 @@ export class PaymentController {
       start,
       end,
       search,
-      userId: req.user.role === 'gestore' ? req.user.userId : undefined,
+      userId: req.user.role === UserRole.Gestore ? req.user.userId : undefined,
     });
   }
 
   @Get('by-booking/:bookingId')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore','cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async getByBooking(@Param('bookingId') bookingId: string, @Req() req) {
     return await this.paymentService.findByBooking(
       bookingId,
-      req.user.role === 'cliente' || req.user.role === 'gestore' ? req.user.userId : undefined,
+      req.user.role === UserRole.Cliente || req.user.role === UserRole.Gestore ? req.user.userId : undefined,
     );
   }
 }

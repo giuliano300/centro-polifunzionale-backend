@@ -11,6 +11,7 @@ import { Space, SpaceDocument } from 'src/schemas/space.schema';
 import { User, UserDocument } from 'src/schemas/user.schema';
 import { WalletService } from './wallet.service';
 import { NotificationsService } from './notifications.service';
+import { DiscountCodeService } from './discount-code.service';
 
 type SearchableBooking = BookingDocument & {
   user?: {
@@ -40,6 +41,7 @@ export class BookingService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private walletService: WalletService,
     private notificationsService: NotificationsService,
+    private discountCodeService: DiscountCodeService,
   ) {}
 
   async create(createBookingDto: CreateBookingDto, userId: string): Promise<Booking> {
@@ -50,11 +52,23 @@ export class BookingService {
 
     this.validateSpaceAvailability(space, createBookingDto);
     await this.validateBookingConflicts(space, createBookingDto);
-    const amount = this.calculateAmount(space, createBookingDto);
+    const targetUserId = createBookingDto.userId || userId;
+    const user = await this.userModel.findById(targetUserId).exec();
+    const monthlyPurchaseCount = await this.monthlyBookingPurchaseCount(targetUserId, createBookingDto.date);
+    const originalAmount = this.calculateAmount(space, createBookingDto);
+    const discount = await this.discountCodeService.apply(
+      createBookingDto.discountCode,
+      'booking',
+      originalAmount,
+      (space._id as Types.ObjectId).toString(),
+      createBookingDto.date,
+      { role: user?.role, createdAt: (user as unknown as { createdAt?: Date })?.createdAt, monthlyPurchaseCount },
+    );
+    const amount = Math.max(originalAmount - discount.amount, 0);
 
     const booking = new this.bookingModel({
       ...createBookingDto,
-      user: new mongoose.Types.ObjectId(createBookingDto.userId || userId),
+      user: new mongoose.Types.ObjectId(targetUserId),
       space: new mongoose.Types.ObjectId(createBookingDto.spaceId),
       rentalUnit: createBookingDto.rentalUnit || space.rentalUnit || 'whole_room',
       rentalMode: createBookingDto.rentalMode || 'time',
@@ -62,13 +76,13 @@ export class BookingService {
     });
     const savedBooking = await booking.save();
 
-    const walletBalance = Math.max(await this.walletService.balance(createBookingDto.userId || userId), 0);
+    const walletBalance = Math.max(await this.walletService.balance(targetUserId), 0);
     const walletAmount = Math.min(walletBalance, amount);
     const externalAmount = Math.max(amount - walletAmount, 0);
 
     if (walletAmount > 0) {
       await this.walletService.debitBookingPayment(
-        createBookingDto.userId || userId,
+        targetUserId,
         (savedBooking._id as Types.ObjectId).toString(),
         walletAmount,
         `Utilizzo wallet per prenotazione ${savedBooking.name || savedBooking._id}`,
@@ -81,6 +95,9 @@ export class BookingService {
       totalAmount: amount,
       walletAmount,
       externalAmount,
+      originalAmount,
+      discountAmount: discount.amount,
+      discountCode: discount.code,
       status: externalAmount <= 0 ? 'PAID' : 'PENDING',
       method: externalAmount <= 0 ? 'wallet' : 'manual',
       provider: 'manual',
@@ -90,7 +107,8 @@ export class BookingService {
       savedBooking.status = 'confirmed';
       await savedBooking.save();
     }
-    const manager = await this.userModel.findById(createBookingDto.userId || userId).exec();
+    await this.discountCodeService.markUsed(discount.code);
+    const manager = await this.userModel.findById(targetUserId).exec();
     await this.notificationsService.create({
       audience: 'admin',
       title: 'Nuovo acquisto spazio',
@@ -111,13 +129,16 @@ export class BookingService {
     const bookingDate = new Date(date);
     const slot = (space.openingHours?.length ? space.openingHours : this.defaultOpeningHours())
       .find((item) => item.day === bookingDate.getDay());
+    const closure = this.getExceptionalClosure(space, bookingDate);
 
-    if (!space.isAvailable || !slot?.isOpen || !configuredModes.includes(rentalMode as 'time' | 'full_day')) {
+    if (closure || !space.isAvailable || !slot?.isOpen || !configuredModes.includes(rentalMode as 'time' | 'full_day')) {
       return {
         spaceId,
         date,
         rentalMode,
         isOpen: false,
+        closureReason: closure?.reason || '',
+        maxConsecutiveTimeSlots: this.getMaxConsecutiveTimeSlots(space, slot),
         slots: [],
       };
     }
@@ -144,6 +165,7 @@ export class BookingService {
         date,
         rentalMode,
         isOpen: true,
+        maxConsecutiveTimeSlots: this.getMaxConsecutiveTimeSlots(space, slot),
         slots: available ? [{
           startTime: slot.openTime,
           endTime: slot.closeTime,
@@ -184,6 +206,7 @@ export class BookingService {
       date,
       rentalMode,
       isOpen: true,
+      maxConsecutiveTimeSlots: this.getMaxConsecutiveTimeSlots(space, slot),
       slots,
     };
   }
@@ -225,6 +248,10 @@ export class BookingService {
       throw new BadRequestException('Spazio chiuso nel giorno selezionato');
     }
 
+    if (this.getExceptionalClosure(space, dto.date)) {
+      throw new BadRequestException('Spazio chiuso per evento eccezionale nel giorno selezionato');
+    }
+
     const open = this.timeToMinutes(slot.openTime);
     const close = this.timeToMinutes(slot.closeTime);
     const normalizedClose = close <= open ? close + 1440 : close;
@@ -250,9 +277,9 @@ export class BookingService {
     }
 
     const requestedSlots = Math.ceil((normalizedEnd - normalizedStart) / slotMinutes);
-    const maxConsecutiveTimeSlots = space.maxConsecutiveTimeSlots || 1;
+    const maxConsecutiveTimeSlots = this.getMaxConsecutiveTimeSlots(space, slot);
     if (requestedSlots > maxConsecutiveTimeSlots) {
-      throw new BadRequestException(`Puoi acquistare al massimo ${maxConsecutiveTimeSlots} fasce consecutive per questo spazio`);
+      throw new BadRequestException(`Puoi acquistare al massimo ${maxConsecutiveTimeSlots} fasce orarie consecutive per questo spazio`);
     }
 
     if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
@@ -343,6 +370,23 @@ export class BookingService {
     return openingHours.find((item) => item.day === bookingDate.getDay());
   }
 
+  private getMaxConsecutiveTimeSlots(space: SpaceDocument, slot?: { maxConsecutiveTimeSlots?: number } | null): number {
+    return Math.max(Number(slot?.maxConsecutiveTimeSlots || space.maxConsecutiveTimeSlots || 1), 1);
+  }
+
+  private getExceptionalClosure(space: SpaceDocument, date: string | Date) {
+    const target = new Date(date);
+    target.setHours(0, 0, 0, 0);
+
+    return (space.exceptionalClosures || []).find((closure) => {
+      const start = new Date(closure.startDate);
+      const end = new Date(closure.endDate || closure.startDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(0, 0, 0, 0);
+      return target >= start && target <= end;
+    });
+  }
+
   private isToday(value: string | Date): boolean {
     const date = new Date(value);
     const today = new Date();
@@ -394,14 +438,25 @@ export class BookingService {
 
   private defaultOpeningHours() {
     return [
-      { day: 0, isOpen: false, openTime: '09:00', closeTime: '18:00' },
-      { day: 1, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 2, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 3, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 4, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 5, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 6, isOpen: false, openTime: '09:00', closeTime: '18:00' },
+      { day: 0, isOpen: false, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 1, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 2, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 3, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 4, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 5, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 6, isOpen: false, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
     ];
+  }
+
+  private async monthlyBookingPurchaseCount(userId: string, date: string | Date): Promise<number> {
+    const target = new Date(date);
+    const start = new Date(target.getFullYear(), target.getMonth(), 1);
+    const end = new Date(target.getFullYear(), target.getMonth() + 1, 1);
+    return this.bookingModel.countDocuments({
+      user: new Types.ObjectId(userId),
+      date: { $gte: start, $lt: end },
+      status: { $in: ['confirmed', 'pending'] },
+    }).exec();
   }
 
   async findAll(filterDto: FilterBookingsDto): Promise<BookingWithPayments[] | PaginatedBookings> {
@@ -458,7 +513,10 @@ export class BookingService {
     const bookingsWithPayments: BookingWithPayments[] = await Promise.all(
       paginatedBookings.map(async (booking) => {
         const payments = await this.paymentModel.find({ bookingId: booking._id }).exec();
-        return { booking, payments };
+        const cancellationRefundAmount = await this.walletService.cancellationRefundAmountByBooking(
+          (booking._id as Types.ObjectId).toString(),
+        );
+        return { booking, payments, cancellationRefundAmount };
       }),
     );
 

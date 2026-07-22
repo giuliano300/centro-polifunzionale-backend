@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotificationsGateway } from 'src/controllers/notifications/notifications.gateway';
 import { Notification, NotificationDocument } from 'src/schemas/notification.schema';
+import { UserRole } from 'src/roles/user-role.enum';
 
 export type CreateNotificationPayload = {
   audience: 'admin' | 'gestore';
@@ -39,16 +40,16 @@ export class NotificationsService {
     return notification;
   }
 
-  async findForUser(userId: string, role: 'admin' | 'gestore' | 'cliente'): Promise<Notification[]> {
-    const query = role === 'admin'
+  async findForUser(userId: string, role: UserRole): Promise<Notification[]> {
+    const query = role === UserRole.Admin
       ? { audience: 'admin' }
       : { audience: 'gestore', user: new Types.ObjectId(userId) };
 
     return this.notificationModel.find(query).sort({ createdAt: -1 }).limit(30).exec();
   }
 
-  async unreadCount(userId: string, role: 'admin' | 'gestore' | 'cliente'): Promise<{ count: number }> {
-    const query = role === 'admin'
+  async unreadCount(userId: string, role: UserRole): Promise<{ count: number }> {
+    const query = role === UserRole.Admin
       ? { audience: 'admin', isRead: false }
       : { audience: 'gestore', user: new Types.ObjectId(userId), isRead: false };
 
@@ -56,16 +57,16 @@ export class NotificationsService {
     return { count };
   }
 
-  async markRead(id: string, userId: string, role: 'admin' | 'gestore' | 'cliente'): Promise<Notification | null> {
-    const query = role === 'admin'
+  async markRead(id: string, userId: string, role: UserRole): Promise<Notification | null> {
+    const query = role === UserRole.Admin
       ? { _id: new Types.ObjectId(id), audience: 'admin' }
       : { _id: new Types.ObjectId(id), audience: 'gestore', user: new Types.ObjectId(userId) };
 
     return this.notificationModel.findOneAndUpdate(query, { isRead: true }, { new: true }).exec();
   }
 
-  async markAllRead(userId: string, role: 'admin' | 'gestore' | 'cliente'): Promise<{ updated: number }> {
-    const query = role === 'admin'
+  async markAllRead(userId: string, role: UserRole): Promise<{ updated: number }> {
+    const query = role === UserRole.Admin
       ? { audience: 'admin', isRead: false }
       : { audience: 'gestore', user: new Types.ObjectId(userId), isRead: false };
 

@@ -28,6 +28,15 @@ export class CourseBooking extends Document {
   @Prop({ default: 0, min: 0 })
   externalAmount: number;
 
+  @Prop({ default: 0, min: 0 })
+  originalAmount: number;
+
+  @Prop({ default: 0, min: 0 })
+  discountAmount: number;
+
+  @Prop()
+  discountCode?: string;
+
   @Prop({ required: true, enum: ['PENDING', 'PAID', 'FREE'], default: 'FREE' })
   paymentStatus: 'PENDING' | 'PAID' | 'FREE';
 }

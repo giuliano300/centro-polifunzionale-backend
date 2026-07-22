@@ -42,4 +42,9 @@ export class CreateBookingDto {
   @IsInt()
   @Min(1)
   workstationQuantity?: number;
+
+  @ApiProperty({ example: 'WELCOME10', description: 'Codice sconto', required: false })
+  @IsOptional()
+  @IsString()
+  discountCode?: string;
 }

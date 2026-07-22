@@ -14,6 +14,7 @@ import { DashboardModule } from './controllers/dashboard/dashboard.module';
 import { WalletModule } from './controllers/wallet/wallet.module';
 import { NotificationsModule } from './controllers/notifications/notifications.module';
 import { SystemSettingsModule } from './controllers/system-settings/system-settings.module';
+import { DiscountCodesModule } from './controllers/discount-codes/discount-codes.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -33,7 +34,8 @@ import { SystemSettingsModule } from './controllers/system-settings/system-setti
     DashboardModule,
     WalletModule,
     NotificationsModule,
-    SystemSettingsModule
+    SystemSettingsModule,
+    DiscountCodesModule
   ],
   controllers: [AppController],
     providers: [AppService],

@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { Roles } from "../../roles/roles.decorator";
+import { Roles, UserRole } from "../../roles/roles.decorator";
 import { RolesGuard } from "../../roles/roles.guard";
 import { AuthGuard } from "@nestjs/passport";
 import { CreateCourseBookingDto } from "src/dto/create-course-booking.dto";
@@ -12,11 +12,11 @@ export class CourseBookingsController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore','cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async create(@Body() dto: CreateCourseBookingDto, @Req() req) {
     const targetDto = {
       ...dto,
-      userId: req.user.role === 'cliente' ? req.user.userId : dto.userId,
+      userId: req.user.role === UserRole.Cliente ? req.user.userId : dto.userId,
     };
     return this.courseBookingsService.create(targetDto, req.user.userId);
   }
@@ -24,11 +24,11 @@ export class CourseBookingsController {
 
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore','cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async findAll(@Query() filterDto: FilterCourseBookingDto, @Req() req) {
-    const targetFilter = req.user.role === 'cliente'
+    const targetFilter = req.user.role === UserRole.Cliente
       ? { ...filterDto, userId: req.user.userId }
-      : req.user.role === 'gestore'
+      : req.user.role === UserRole.Gestore
         ? { ...filterDto, managerId: req.user.userId }
         : filterDto;
     return this.courseBookingsService.findAll(targetFilter);
@@ -36,9 +36,9 @@ export class CourseBookingsController {
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore','cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async remove(@Param('id') id: string, @Req() req) {
-    return this.courseBookingsService.remove(id, req.user.role === 'cliente' ? req.user.userId : undefined);
+    return this.courseBookingsService.remove(id, req.user.role === UserRole.Cliente ? req.user.userId : undefined);
   }
 
 }

@@ -7,6 +7,7 @@ import { CourseBooking } from 'src/schemas/course-booking.schema';
 import { Payment, PaymentDocument } from 'src/schemas/payment.schema';
 import { Space, SpaceDocument } from 'src/schemas/space.schema';
 import { User, UserDocument } from 'src/schemas/user.schema';
+import { UserRole } from 'src/roles/user-role.enum';
 
 @Injectable()
 export class DashboardService {
@@ -59,10 +60,10 @@ export class DashboardService {
       paymentStatusBreakdown,
       courseBookingStatusBreakdown,
     ] = await Promise.all([
-      this.userModel.countDocuments({ role: { $ne: 'admin' } }).exec(),
-      this.userModel.countDocuments({ role: 'cliente' }).exec(),
-      this.userModel.countDocuments({ role: 'gestore' }).exec(),
-      this.userModel.countDocuments({ role: { $ne: 'admin' }, isActive: { $ne: false } }).exec(),
+      this.userModel.countDocuments({ role: { $ne: UserRole.Admin } }).exec(),
+      this.userModel.countDocuments({ role: UserRole.Cliente }).exec(),
+      this.userModel.countDocuments({ role: UserRole.Gestore }).exec(),
+      this.userModel.countDocuments({ role: { $ne: UserRole.Admin }, isActive: { $ne: false } }).exec(),
       this.spaceModel.countDocuments().exec(),
       this.spaceModel.countDocuments({ isAvailable: true }).exec(),
       this.bookingModel.countDocuments().exec(),
@@ -76,7 +77,7 @@ export class DashboardService {
       this.sumPayments({ status: 'PAID' }),
       this.sumPayments({ status: 'PAID', createdAt: { $gte: monthStart, $lt: nextMonthStart } }),
       this.sumPayments({ status: 'PENDING' }),
-      this.userModel.find({ role: { $ne: 'admin' } }).sort({ _id: -1 }).limit(6).select('-password').exec(),
+      this.userModel.find({ role: { $ne: UserRole.Admin } }).sort({ _id: -1 }).limit(6).select('-password').exec(),
       this.bookingModel.find().sort({ _id: -1 }).limit(6).populate('user').populate('space').exec(),
       this.courseModel.find().sort({ _id: -1 }).limit(6).populate({
         path: 'booking',

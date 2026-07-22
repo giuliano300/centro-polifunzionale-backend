@@ -5,6 +5,7 @@ import { FilterQuery, Model, Types } from 'mongoose';
 import { CreatePaymentDto } from '../dto/create-payment.dto';
 import { Booking, BookingDocument } from 'src/schemas/booking.schema';
 import { ConfigService } from '@nestjs/config';
+import { DEFAULT_PAYMENT_METHODS, PaymentMethod } from '../payments/payment-method.enum';
 
 type SearchablePayment = Payment & {
   bookingId?: {
@@ -67,7 +68,9 @@ export class PaymentService {
     options: { amount?: number; method?: string; transactionId?: string } = {},
     allowedUserId?: string,
   ): Promise<Payment> {
-    await this.assertBookingAccess(bookingId, allowedUserId);
+    const booking = await this.assertBookingAccess(bookingId, allowedUserId);
+    const method = options.method || 'manual';
+    this.assertPaymentMethodAllowed(booking, method);
     const bookingObjectId = new Types.ObjectId(bookingId);
 
     const alreadyPaid = await this.paymentModel.findOne({
@@ -104,7 +107,8 @@ export class PaymentService {
     payment.totalAmount = payment.totalAmount || amount;
     payment.walletAmount = payment.walletAmount || 0;
     payment.status = 'PAID';
-    payment.method = options.method || 'manual';
+    payment.method = method;
+    payment.provider = method === PaymentMethod.Cash ? 'manual' : payment.provider || 'manual';
     payment.transactionId = options.transactionId || `MANUAL-${Date.now()}`;
     const saved = await payment.save();
 
@@ -120,6 +124,7 @@ export class PaymentService {
     allowedUserId?: string,
   ): Promise<{ provider: string; paymentId: string; checkoutUrl: string; transactionId?: string }> {
     const booking = await this.assertBookingAccess(bookingId, allowedUserId);
+    this.assertPaymentMethodAllowed(booking, provider);
     const payment = await this.getOrCreatePendingPayment(bookingId);
     const amount = payment.amount;
     if (!amount || amount <= 0) {
@@ -151,6 +156,30 @@ export class PaymentService {
       paymentId: (saved._id as Types.ObjectId).toString(),
       checkoutUrl: checkout.checkoutUrl,
       transactionId: checkout.transactionId,
+    };
+  }
+
+  async sendBookingPaymentLink(
+    bookingId: string,
+    allowedUserId?: string,
+  ): Promise<{ sent: boolean; email?: string; paymentId: string; paymentUrl: string }> {
+    await this.assertBookingAccess(bookingId, allowedUserId);
+    const payment = await this.getOrCreatePendingPayment(bookingId);
+    const populatedBooking = await this.bookingModel.findById(bookingId).populate('user').exec();
+    const user = populatedBooking?.user as unknown as { email?: string } | undefined;
+    const frontUrl = this.configService.get<string>('GESTORE_FRONTEND_URL', 'http://localhost:4400');
+    const paymentUrl = `${frontUrl.replace(/\/$/, '')}/bookings?bookingId=${bookingId}&payment=pending`;
+
+    payment.checkoutUrl = paymentUrl;
+    payment.method = payment.method || 'manual';
+    payment.provider = payment.provider || 'manual';
+    await payment.save();
+
+    return {
+      sent: false,
+      email: user?.email,
+      paymentId: (payment._id as Types.ObjectId).toString(),
+      paymentUrl,
     };
   }
 
@@ -198,7 +227,7 @@ export class PaymentService {
   }
 
   private async assertBookingAccess(bookingId: string, allowedUserId?: string): Promise<BookingDocument> {
-    const booking = await this.bookingModel.findById(bookingId).exec();
+    const booking = await this.bookingModel.findById(bookingId).populate('space').exec();
     if (!booking) {
       throw new NotFoundException('Prenotazione non trovata');
     }
@@ -208,6 +237,19 @@ export class PaymentService {
     }
 
     return booking;
+  }
+
+  private assertPaymentMethodAllowed(booking: BookingDocument, method: string): void {
+    if (method === 'manual') {
+      return;
+    }
+
+    const space = booking.space as unknown as { paymentMethods?: string[] } | undefined;
+    const paymentMethods = space?.paymentMethods?.length ? space.paymentMethods : DEFAULT_PAYMENT_METHODS;
+
+    if (!paymentMethods.includes(method)) {
+      throw new BadRequestException('Metodo di pagamento non disponibile per questo spazio');
+    }
   }
 
   private async closeDuplicatePending(bookingId: Types.ObjectId, keepPaymentId?: unknown): Promise<void> {

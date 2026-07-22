@@ -1,5 +1,6 @@
 import { Type } from "class-transformer";
 import { IsEmail, IsEnum, IsInt, IsOptional, IsString } from "class-validator";
+import { UserRole } from "src/roles/user-role.enum";
 
 export class GetUsersFilterDto {
   @IsOptional()
@@ -11,12 +12,12 @@ export class GetUsersFilterDto {
   search?: string;
 
   @IsOptional()
-  @IsEnum(['admin', 'gestore', 'cliente'])
-  role?: string;
+  @IsEnum(UserRole)
+  role?: UserRole;
 
   @IsOptional()
-  @IsEnum(['admin', 'gestore', 'cliente'])
-  excludeRole?: string;
+  @IsEnum(UserRole)
+  excludeRole?: UserRole;
 
   @IsOptional()
   @IsInt()

@@ -12,6 +12,7 @@ import { NotificationsService } from "./notifications.service";
 type SearchableCourse = CourseDocument & {
   booking?: {
     name?: string;
+    status?: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled';
     user?: {
       _id?: string;
       name?: string;
@@ -63,6 +64,14 @@ export class CourseService {
 
     if (managerId && booking.user.toString() !== managerId) {
       throw new BadRequestException('Prenotazione non accessibile per questo gestore');
+    }
+
+    if (booking.status === 'cancelled') {
+      throw new BadRequestException('Non puoi gestire un corso per una prenotazione annullata');
+    }
+
+    if (booking.status === 'cancellation_requested') {
+      throw new BadRequestException('Non puoi gestire un corso mentre la prenotazione e in richiesta di annullamento');
     }
 
     const today = new Date();
@@ -139,6 +148,11 @@ export class CourseService {
         return user === filters.managerId;
       });
     }
+
+    courses = courses.filter((course) => {
+      const booking = typeof course.booking === 'string' ? null : course.booking;
+      return booking?.status !== 'cancelled' && booking?.status !== 'cancellation_requested';
+    });
 
     const normalizedSearch = filters.search?.trim().toLowerCase();
     if (!normalizedSearch) {

@@ -11,4 +11,8 @@ export class CreateCourseBookingDto {
   @IsOptional()
   @IsString()
   transactionId?: string;
+
+  @IsOptional()
+  @IsString()
+  discountCode?: string;
 }

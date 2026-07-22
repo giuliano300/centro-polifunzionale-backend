@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { DEFAULT_PAYMENT_METHODS, PaymentMethod, PAYMENT_METHOD_VALUES } from '../payments/payment-method.enum';
 
 export type SpaceDocument = Space & Document;
 
@@ -11,6 +12,13 @@ export class SpaceOpeningSlot {
   isOpen: boolean;
   openTime: string;
   closeTime: string;
+  maxConsecutiveTimeSlots: number;
+}
+
+export class SpaceExceptionalClosure {
+  startDate: Date;
+  endDate: Date;
+  reason?: string;
 }
 
 @Schema()
@@ -45,24 +53,38 @@ export class Space {
   @Prop({ default: 2, min: 0 })
   courseCreationAdvanceHours: number;
 
+  @Prop({ type: [String], enum: PAYMENT_METHOD_VALUES, default: DEFAULT_PAYMENT_METHODS })
+  paymentMethods: PaymentMethod[];
+
   @Prop({
     type: [{
       day: { type: Number, min: 0, max: 6, required: true },
       isOpen: { type: Boolean, default: true },
       openTime: { type: String, default: '09:00' },
       closeTime: { type: String, default: '18:00' },
+      maxConsecutiveTimeSlots: { type: Number, default: 1, min: 1 },
     }],
     default: [
-      { day: 0, isOpen: false, openTime: '09:00', closeTime: '18:00' },
-      { day: 1, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 2, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 3, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 4, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 5, isOpen: true, openTime: '09:00', closeTime: '18:00' },
-      { day: 6, isOpen: false, openTime: '09:00', closeTime: '18:00' },
+      { day: 0, isOpen: false, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 1, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 2, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 3, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 4, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 5, isOpen: true, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
+      { day: 6, isOpen: false, openTime: '09:00', closeTime: '18:00', maxConsecutiveTimeSlots: 1 },
     ],
   })
   openingHours: SpaceOpeningSlot[];
+
+  @Prop({
+    type: [{
+      startDate: { type: Date, required: true },
+      endDate: { type: Date, required: true },
+      reason: { type: String },
+    }],
+    default: [],
+  })
+  exceptionalClosures: SpaceExceptionalClosure[];
 
   @Prop({ default: true })
   isAvailable: boolean;

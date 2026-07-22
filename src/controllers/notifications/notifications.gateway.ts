@@ -6,12 +6,13 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { UserRole } from 'src/roles/user-role.enum';
 
 type SocketUser = {
   sub?: string;
   userId?: string;
   email?: string;
-  role?: 'admin' | 'gestore' | 'cliente';
+  role?: UserRole;
 };
 
 @WebSocketGateway({
@@ -51,7 +52,7 @@ export class NotificationsGateway implements OnGatewayConnection {
   }
 
   emitToAdmin(notification: unknown): void {
-    this.server?.to('role:admin').emit('notification', notification);
+    this.server?.to(`role:${UserRole.Admin}`).emit('notification', notification);
   }
 
   emitToUser(userId: string, notification: unknown): void {

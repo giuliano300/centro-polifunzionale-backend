@@ -3,7 +3,7 @@ import { CourseService } from "../../services/course.service";
 import { CreateCourseDto } from "../../dto/create-course.dto";
 import { UpdateCourseDto } from "../../dto/update-course.dto";
 import { AuthGuard } from "@nestjs/passport";
-import { Roles } from "src/roles/roles.decorator";
+import { Roles, UserRole } from "src/roles/roles.decorator";
 import { RolesGuard } from "src/roles/roles.guard";
 
 @Controller('courses')
@@ -12,14 +12,14 @@ export class CoursesController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin', 'gestore')
+  @Roles(UserRole.Admin, UserRole.Gestore)
   create(@Body() dto: CreateCourseDto, @Req() req) {
-    return this.courseService.create(dto, req.user.role === 'gestore' ? req.user.userId : undefined);
+    return this.courseService.create(dto, req.user.role === UserRole.Gestore ? req.user.userId : undefined);
   }
 
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin', 'gestore', 'cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   findAll(
     @Query('start') start?: string,
     @Query('end') end?: string,
@@ -32,7 +32,7 @@ export class CoursesController {
       end,
       status,
       search,
-      managerId: req.user.role === 'gestore' ? req.user.userId : undefined,
+      managerId: req.user.role === UserRole.Gestore ? req.user.userId : undefined,
     });
   }
 
@@ -43,15 +43,15 @@ export class CoursesController {
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin', 'gestore')
+  @Roles(UserRole.Admin, UserRole.Gestore)
   update(@Param('id') id: string, @Body() dto: UpdateCourseDto, @Req() req) {
-    return this.courseService.update(id, dto, req.user.role === 'gestore' ? req.user.userId : undefined);
+    return this.courseService.update(id, dto, req.user.role === UserRole.Gestore ? req.user.userId : undefined);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin', 'gestore')
+  @Roles(UserRole.Admin, UserRole.Gestore)
   remove(@Param('id') id: string, @Req() req) {
-    return this.courseService.remove(id, req.user.role === 'gestore' ? req.user.userId : undefined);
+    return this.courseService.remove(id, req.user.role === UserRole.Gestore ? req.user.userId : undefined);
   }
 }

@@ -8,6 +8,7 @@ import { Space, SpaceSchema } from "src/schemas/space.schema";
 import { Payment, PaymentSchema } from "src/schemas/payment.schema";
 import { WalletModule } from "../wallet/wallet.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { DiscountCodesModule } from "../discount-codes/discount-codes.module";
 
 
 @Module({
@@ -17,7 +18,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
     MongooseModule.forFeature([{ name: Space.name, schema: SpaceSchema }]),
     MongooseModule.forFeature([{ name: Payment.name, schema: PaymentSchema }]),
     WalletModule,
-    NotificationsModule
+    NotificationsModule,
+    DiscountCodesModule
   ],
   controllers: [BookingsController],
   providers: [BookingService],

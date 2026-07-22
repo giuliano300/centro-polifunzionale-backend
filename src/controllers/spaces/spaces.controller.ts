@@ -12,7 +12,7 @@ import { SpacesService } from '../../services/spaces.service';
 import { UpdateSpaceDto } from '../../dto/update-space.dto';
 import { Space } from '../../schemas/space.schema';
 import { RolesGuard } from 'src/roles/roles.guard';
-import { Roles } from 'src/roles/roles.decorator';
+import { Roles, UserRole } from 'src/roles/roles.decorator';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateSpaceDto } from 'src/dto/create-space.dto';
 
@@ -25,7 +25,7 @@ export class SpacesController {
   // GET /spaces
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin','gestore','cliente')
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async findAll(): Promise<Space[]> {
     return this.spacesService.findAll();
   }
@@ -39,7 +39,7 @@ export class SpacesController {
   // POST /spaces
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin')
+  @Roles(UserRole.Admin)
   async create(@Body() createSpaceDto: CreateSpaceDto): Promise<Space> {
     return this.spacesService.create(createSpaceDto);
   }
@@ -47,7 +47,7 @@ export class SpacesController {
   // PUT /spaces/:id
   @Put(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin')
+  @Roles(UserRole.Admin)
   async update(
     @Param('id') id: string,
     @Body() updateSpaceDto: UpdateSpaceDto,
@@ -58,7 +58,7 @@ export class SpacesController {
   // DELETE /spaces/:id
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin')
+  @Roles(UserRole.Admin)
   async remove(@Param('id') id: string): Promise<{ deleted: boolean }> {
     return this.spacesService.remove(id);
   }

@@ -12,6 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { PAYMENT_METHOD_VALUES, PaymentMethod } from '../payments/payment-method.enum';
 
 export class SpaceOpeningSlotDto {
   @IsInt()
@@ -27,6 +28,23 @@ export class SpaceOpeningSlotDto {
 
   @IsString()
   closeTime: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxConsecutiveTimeSlots?: number;
+}
+
+export class SpaceExceptionalClosureDto {
+  @IsString()
+  startDate: string;
+
+  @IsString()
+  endDate: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 export class CreateSpaceDto {
@@ -82,12 +100,25 @@ export class CreateSpaceDto {
   @Min(0)
   courseCreationAdvanceHours?: number;
 
+  @ApiProperty({ example: ['cash', 'stripe', 'paypal', 'nexi'], description: 'Metodi di pagamento consentiti per lo spazio', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsIn(PAYMENT_METHOD_VALUES, { each: true })
+  paymentMethods?: PaymentMethod[];
+
   @ApiProperty({ description: 'Orari settimanali di apertura e chiusura', required: false })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SpaceOpeningSlotDto)
   openingHours?: SpaceOpeningSlotDto[];
+
+  @ApiProperty({ description: 'Giorni o intervalli di chiusura eccezionale', required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SpaceExceptionalClosureDto)
+  exceptionalClosures?: SpaceExceptionalClosureDto[];
 
   @ApiProperty({ example: true, description: 'Disponibilita dello spazio', required: false })
   @IsOptional()

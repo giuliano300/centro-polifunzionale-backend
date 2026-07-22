@@ -1,5 +1,5 @@
 import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString } from "class-validator";
-import { UserRole } from "src/roles/roles.decorator";
+import { UserRole } from "src/roles/user-role.enum";
 
 // dto/update-user.dto.ts
 export class UpdateUserDto {
@@ -28,6 +28,6 @@ export class UpdateUserDto {
   isActive?: boolean;
 
   @IsOptional()
-  @IsEnum(['admin', 'gestore', 'cliente'])
+  @IsEnum(UserRole)
   role?: UserRole;
 }
