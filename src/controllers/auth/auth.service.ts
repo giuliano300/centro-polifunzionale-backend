@@ -15,7 +15,7 @@ import { ConfirmManagerPasswordResetDto, RequestManagerPasswordResetDto } from '
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from 'src/roles/user-role.enum';
-import { CompleteClientInviteDto } from 'src/dto/client-invite.dto';
+import { CompleteClientInviteDto, RequestClientInvitePhoneOtpDto } from 'src/dto/client-invite.dto';
 
 @Injectable()
 export class AuthService {
@@ -27,12 +27,17 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
-  async validateUser(email: string, password: string): Promise<User | null> {
+  async validateUser(email: string, password: string): Promise<User | 'disabled' | null> {
     const user = await this.usersService.findByEmail(email);
-    if (user && user.isActive !== false && await bcrypt.compare(password, user.password))
-      return user;
+    if (!user || !await bcrypt.compare(password, user.password)) {
+      return null;
+    }
 
-    return null;
+    if (user.isActive === false) {
+      return 'disabled';
+    }
+
+    return user;
   }
 
   async login(user: Partial<UserDto>) {
@@ -175,6 +180,14 @@ export class AuthService {
 
   async completeClientRegistration(dto: CompleteClientInviteDto) {
     return this.usersService.completeClientInvite(dto);
+  }
+
+  async requestClientInvitePhoneOtp(dto: RequestClientInvitePhoneOtpDto) {
+    return this.usersService.requestInvitePhoneOtp(dto);
+  }
+
+  async getClientInviteDetails(token: string) {
+    return this.usersService.getInviteDetails(token);
   }
 
   private normalizeManagerRegistration(dto: RequestManagerRegistrationOtpDto): RequestManagerRegistrationOtpDto {

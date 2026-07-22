@@ -1,11 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from '../../interfaces/jwt-payload.interface';
+import { UsersService } from 'src/services/users.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor() {
+  constructor(private usersService: UsersService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -14,7 +15,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    // Qui Passport inserirà il risultato in request.user
-    return { userId: payload.sub, email: payload.email, role: payload.role };
+    const user = await this.usersService.findById(payload.sub);
+    if (!user || user.isActive === false) {
+      throw new UnauthorizedException('Utente disattivato');
+    }
+
+    return { userId: payload.sub, email: user.email, name: user.name, role: user.role };
   }
 }

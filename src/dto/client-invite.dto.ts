@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from 'src/roles/user-role.enum';
 
 export class InviteClientDto {
@@ -39,4 +39,19 @@ export class CompleteClientInviteDto {
   @IsString()
   @MinLength(6)
   password: string;
+
+  @IsBoolean()
+  acceptedDataProcessing: boolean;
+
+  @IsOptional()
+  @IsString()
+  phoneOtp?: string;
+}
+
+export class RequestClientInvitePhoneOtpDto {
+  @IsString()
+  token: string;
+
+  @IsString()
+  phone: string;
 }

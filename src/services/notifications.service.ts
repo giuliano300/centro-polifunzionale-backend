@@ -40,6 +40,10 @@ export class NotificationsService {
     return notification;
   }
 
+  emitAccountDisabled(userId: string): void {
+    this.gateway.emitAccountDisabled(userId);
+  }
+
   async findForUser(userId: string, role: UserRole): Promise<Notification[]> {
     const query = role === UserRole.Admin
       ? { audience: 'admin' }

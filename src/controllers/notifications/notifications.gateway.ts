@@ -58,4 +58,8 @@ export class NotificationsGateway implements OnGatewayConnection {
   emitToUser(userId: string, notification: unknown): void {
     this.server?.to(`user:${userId}`).emit('notification', notification);
   }
+
+  emitAccountDisabled(userId: string): void {
+    this.server?.to(`user:${userId}`).emit('account-disabled');
+  }
 }

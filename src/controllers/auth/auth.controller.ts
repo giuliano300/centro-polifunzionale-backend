@@ -1,11 +1,11 @@
-import { Controller, Post, Body, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CreateUserDto } from '../../dto/create-user.dto';
 import { LoginDto } from '../../dto/login.dto';
 import { ResetPasswordDto } from 'src/dto/reset-password.dto';
 import { ConfirmManagerRegistrationOtpDto, RequestManagerRegistrationOtpDto } from 'src/dto/manager-registration.dto';
 import { ConfirmManagerPasswordResetDto, RequestManagerPasswordResetDto } from 'src/dto/manager-password-reset.dto';
-import { CompleteClientInviteDto } from 'src/dto/client-invite.dto';
+import { CompleteClientInviteDto, RequestClientInvitePhoneOtpDto } from 'src/dto/client-invite.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -19,6 +19,9 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     const user = await this.authService.validateUser(loginDto.email, loginDto.password);
+    if (user === 'disabled') {
+      throw new UnauthorizedException('Utente disattivato, contattare l amministrazione.');
+    }
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -53,5 +56,15 @@ export class AuthController {
   @Post('client/complete-registration')
   async completeClientRegistration(@Body() dto: CompleteClientInviteDto) {
     return this.authService.completeClientRegistration(dto);
+  }
+
+  @Post('client/complete-registration/request-phone-otp')
+  async requestClientInvitePhoneOtp(@Body() dto: RequestClientInvitePhoneOtpDto) {
+    return this.authService.requestClientInvitePhoneOtp(dto);
+  }
+
+  @Get('client/complete-registration')
+  async getClientInviteDetails(@Query('token') token: string) {
+    return this.authService.getClientInviteDetails(token);
   }
 }

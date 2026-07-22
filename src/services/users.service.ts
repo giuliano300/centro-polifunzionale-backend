@@ -9,9 +9,10 @@ import { GetUsersFilterDto } from 'src/filters/get-user-filters.dto';
 import { WalletService } from './wallet.service';
 import { SystemSettingsService } from './system-settings.service';
 import { UserRole } from 'src/roles/user-role.enum';
-import { InviteClientDto, CompleteClientInviteDto } from 'src/dto/client-invite.dto';
+import { InviteClientDto, CompleteClientInviteDto, RequestClientInvitePhoneOtpDto } from 'src/dto/client-invite.dto';
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
+import { NotificationsService } from './notifications.service';
 
 @Injectable()
 export class UsersService {
@@ -20,6 +21,7 @@ export class UsersService {
     private walletService: WalletService,
     private systemSettingsService: SystemSettingsService,
     private configService: ConfigService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async create(createUserDto: CreateUserDto): Promise<User> {
@@ -169,6 +171,94 @@ export class UsersService {
   }
 
   async completeClientInvite(dto: CompleteClientInviteDto): Promise<{ completed: boolean; user: User }> {
+    if (!dto.acceptedDataProcessing) {
+      throw new BadRequestException('Devi accettare il trattamento dei dati');
+    }
+
+    const user = await this.findPendingInviteByToken(dto.token);
+    const normalized = this.normalizeOptionalIdentityFields({
+      name: dto.name,
+      phone: dto.phone || user.phone,
+      taxCode: dto.taxCode || user.taxCode,
+    });
+    this.validateTaxCode(normalized.taxCode);
+    this.validateItalianMobilePhone(normalized.phone);
+    await this.assertUniqueIdentityExcludingUser(
+      (user._id as Types.ObjectId).toString(),
+      undefined,
+      normalized.phone,
+      normalized.taxCode,
+    );
+
+    if (
+      !dto.phoneOtp ||
+      !user.completionPhoneOtpHash ||
+      user.completionPhoneOtpTarget !== normalized.phone ||
+      !user.completionPhoneOtpExpiresAt ||
+      user.completionPhoneOtpExpiresAt.getTime() < Date.now() ||
+      !await bcrypt.compare(dto.phoneOtp, user.completionPhoneOtpHash)
+    ) {
+      throw new BadRequestException('OTP cellulare non valido o scaduto');
+    }
+
+    user.name = normalized.name;
+    user.phone = normalized.phone;
+    user.taxCode = normalized.taxCode;
+    user.password = await bcrypt.hash(dto.password, 10);
+    user.isActive = true;
+    user.registrationStatus = 'complete';
+    user.completionTokenHash = undefined;
+    user.completionTokenExpiresAt = undefined;
+    user.completionPhoneOtpHash = undefined;
+    user.completionPhoneOtpTarget = undefined;
+    user.completionPhoneOtpExpiresAt = undefined;
+    const saved = await user.save();
+
+    const credit = await this.systemSettingsService.newUserWalletCredit(saved.role);
+    if (credit > 0) {
+      await this.walletService.creditSignupBonus(
+        (saved._id as Types.ObjectId).toString(),
+        credit,
+        'Premio completamento registrazione',
+      );
+    }
+
+    return { completed: true, user: saved };
+  }
+
+  async requestInvitePhoneOtp(dto: RequestClientInvitePhoneOtpDto): Promise<{ requested: boolean; phone: string; expiresInMinutes: number; devPhoneOtp?: string }> {
+    const user = await this.findPendingInviteByToken(dto.token);
+    const phone = this.normalizeItalianMobilePhone(dto.phone);
+    this.validateItalianMobilePhone(phone);
+    await this.assertUniqueIdentityExcludingUser((user._id as Types.ObjectId).toString(), undefined, phone);
+
+    const phoneOtp = this.generateOtp();
+    user.completionPhoneOtpHash = await bcrypt.hash(phoneOtp, 10);
+    user.completionPhoneOtpTarget = phone;
+    user.completionPhoneOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save();
+
+    return {
+      requested: true,
+      phone,
+      expiresInMinutes: 10,
+      devPhoneOtp: phoneOtp,
+    };
+  }
+
+  async getInviteDetails(token: string): Promise<Pick<User, 'name' | 'email' | 'phone' | 'taxCode' | 'role'> & { expiresAt?: Date }> {
+    const user = await this.findPendingInviteByToken(token);
+    return {
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      taxCode: user.taxCode,
+      role: user.role,
+      expiresAt: user.completionTokenExpiresAt,
+    };
+  }
+
+  private async findPendingInviteByToken(token: string): Promise<UserDocument> {
     const requests = await this.userModel.find({
       role: { $in: [UserRole.Cliente, UserRole.Gestore] },
       registrationStatus: 'invited',
@@ -177,38 +267,11 @@ export class UsersService {
     }).exec();
 
     for (const user of requests) {
-      if (!user.completionTokenHash || !await bcrypt.compare(dto.token, user.completionTokenHash)) {
+      if (!user.completionTokenHash || !await bcrypt.compare(token, user.completionTokenHash)) {
         continue;
       }
 
-      const normalized = this.normalizeOptionalIdentityFields({
-        name: dto.name,
-        phone: dto.phone || user.phone,
-        taxCode: dto.taxCode || user.taxCode,
-      });
-      this.validateTaxCode(normalized.taxCode);
-      this.validateItalianMobilePhone(normalized.phone);
-
-      user.name = normalized.name;
-      user.phone = normalized.phone;
-      user.taxCode = normalized.taxCode;
-      user.password = await bcrypt.hash(dto.password, 10);
-      user.isActive = true;
-      user.registrationStatus = 'complete';
-      user.completionTokenHash = undefined;
-      user.completionTokenExpiresAt = undefined;
-      const saved = await user.save();
-
-      const credit = await this.systemSettingsService.newUserWalletCredit(saved.role);
-      if (credit > 0) {
-        await this.walletService.creditSignupBonus(
-          (saved._id as Types.ObjectId).toString(),
-          credit,
-          'Premio completamento registrazione cliente',
-        );
-      }
-
-      return { completed: true, user: saved };
+      return user;
     }
 
     throw new BadRequestException('Link registrazione scaduto o non valido');
@@ -245,6 +308,10 @@ export class UsersService {
 
     if (!updated) {
       throw new NotFoundException('Utente non trovato');
+    }
+
+    if (current.role === UserRole.Gestore && current.isActive !== false && normalizedDto.isActive === false) {
+      this.notificationsService.emitAccountDisabled(id);
     }
 
     return updated;
@@ -287,8 +354,47 @@ export class UsersService {
     return phone.replace(/[\s./()-]/g, '');
   }
 
+  private async assertUniqueIdentityExcludingUser(userId: string, email?: string, phone?: string, taxCode?: string): Promise<void> {
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPhone = phone?.trim();
+    const normalizedTaxCode = taxCode?.trim().toUpperCase();
+    const or: Record<string, string>[] = [];
+
+    if (normalizedEmail) {
+      or.push({ email: normalizedEmail });
+    }
+    if (normalizedPhone) {
+      or.push({ phone: normalizedPhone });
+    }
+    if (normalizedTaxCode) {
+      or.push({ taxCode: normalizedTaxCode });
+    }
+    if (!or.length) {
+      return;
+    }
+
+    const existing = await this.userModel.findOne({ _id: { $ne: userId }, $or: or }).exec();
+    if (!existing) {
+      return;
+    }
+    if (normalizedEmail && existing.email === normalizedEmail) {
+      throw new BadRequestException('Email gia registrata');
+    }
+    if (normalizedPhone && existing.phone === normalizedPhone) {
+      throw new BadRequestException('Cellulare gia registrato');
+    }
+    if (normalizedTaxCode && existing.taxCode === normalizedTaxCode) {
+      throw new BadRequestException('Codice fiscale gia registrato');
+    }
+    throw new BadRequestException('Utente gia registrato');
+  }
+
   private randomPasswordPlaceholder(): string {
     return `Tmp${Math.random().toString(36).slice(2, 10)}!`;
+  }
+
+  private generateOtp(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
   private validateItalianMobilePhone(phone?: string): void {
