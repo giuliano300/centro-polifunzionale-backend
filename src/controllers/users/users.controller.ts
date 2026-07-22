@@ -47,6 +47,13 @@ export class UsersController {
   async updateMe(@Req() req, @Body() dto: UpdateUserDto): Promise<User> {
     return this.usersService.updateSelf(req.user.userId, dto);
   }
+
+  @Post('me/request-phone-otp')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
+  async requestProfilePhoneOtp(@Req() req, @Body() dto: { phone: string }): Promise<{ requested: boolean; phone: string; expiresInMinutes: number; devPhoneOtp?: string }> {
+    return this.usersService.requestProfilePhoneOtp(req.user.userId, dto.phone);
+  }
   
   @Get('email/:email')
   @UseGuards(AuthGuard('jwt'), RolesGuard)

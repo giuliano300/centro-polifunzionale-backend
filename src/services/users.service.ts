@@ -278,14 +278,68 @@ export class UsersService {
   }
 
   async updateSelf(id: string, dto: UpdateUserDto): Promise<User> {
+    const current = await this.findById(id);
+    const normalizedPhone = dto.phone ? this.normalizeItalianMobilePhone(dto.phone) : dto.phone;
+    const phoneChanged = dto.phone !== undefined && normalizedPhone !== current.phone;
+
+    if (phoneChanged) {
+      if (!normalizedPhone) {
+        throw new BadRequestException('Cellulare obbligatorio');
+      }
+      this.validateItalianMobilePhone(normalizedPhone);
+      await this.assertUniqueIdentityExcludingUser(id, undefined, normalizedPhone);
+
+      if (
+        !dto.phoneOtp ||
+        !current.profilePhoneOtpHash ||
+        current.profilePhoneOtpTarget !== normalizedPhone ||
+        !current.profilePhoneOtpExpiresAt ||
+        current.profilePhoneOtpExpiresAt.getTime() < Date.now() ||
+        !await bcrypt.compare(dto.phoneOtp, current.profilePhoneOtpHash)
+      ) {
+        throw new BadRequestException('OTP cellulare non valido o scaduto');
+      }
+    }
+
     const allowedDto: UpdateUserDto = {
       name: dto.name,
-      phone: dto.phone,
+      phone: normalizedPhone,
       taxCode: dto.taxCode,
       password: dto.password,
     };
 
-    return this.update(id, allowedDto);
+    const updated = await this.update(id, allowedDto);
+    if (phoneChanged) {
+      await this.userModel.findByIdAndUpdate(id, {
+        $unset: {
+          profilePhoneOtpHash: '',
+          profilePhoneOtpTarget: '',
+          profilePhoneOtpExpiresAt: '',
+        },
+      }).exec();
+    }
+    return updated;
+  }
+
+  async requestProfilePhoneOtp(id: string, phone: string): Promise<{ requested: boolean; phone: string; expiresInMinutes: number; devPhoneOtp?: string }> {
+    await this.findById(id);
+    const normalizedPhone = this.normalizeItalianMobilePhone(phone);
+    this.validateItalianMobilePhone(normalizedPhone);
+    await this.assertUniqueIdentityExcludingUser(id, undefined, normalizedPhone);
+
+    const phoneOtp = this.generateOtp();
+    await this.userModel.findByIdAndUpdate(id, {
+      profilePhoneOtpHash: await bcrypt.hash(phoneOtp, 10),
+      profilePhoneOtpTarget: normalizedPhone,
+      profilePhoneOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    }).exec();
+
+    return {
+      requested: true,
+      phone: normalizedPhone,
+      expiresInMinutes: 10,
+      devPhoneOtp: phoneOtp,
+    };
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<User> {

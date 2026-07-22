@@ -48,6 +48,15 @@ export class User {
 
   @Prop()
   completionPhoneOtpExpiresAt?: Date;
+
+  @Prop()
+  profilePhoneOtpHash?: string;
+
+  @Prop()
+  profilePhoneOtpTarget?: string;
+
+  @Prop()
+  profilePhoneOtpExpiresAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
