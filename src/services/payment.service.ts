@@ -6,6 +6,7 @@ import { CreatePaymentDto } from '../dto/create-payment.dto';
 import { Booking, BookingDocument } from 'src/schemas/booking.schema';
 import { ConfigService } from '@nestjs/config';
 import { DEFAULT_PAYMENT_METHODS, PaymentMethod } from '../payments/payment-method.enum';
+import { NotificationsService } from './notifications.service';
 
 type SearchablePayment = Payment & {
   bookingId?: {
@@ -28,6 +29,7 @@ export class PaymentService {
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
     private configService: ConfigService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async create(createPaymentDto: CreatePaymentDto): Promise<Payment> {
@@ -114,6 +116,7 @@ export class PaymentService {
 
     await this.closeDuplicatePending(bookingObjectId, saved._id);
     await this.bookingModel.findByIdAndUpdate(bookingId, { status: 'confirmed' }).exec();
+    await this.notifyPaymentConfirmed(bookingId, saved.amount, method);
     return saved;
   }
 
@@ -283,6 +286,52 @@ export class PaymentService {
     }
 
     throw new BadRequestException('Pagamento pending non trovato');
+  }
+
+  private async notifyPaymentConfirmed(bookingId: string, amount: number, method: string): Promise<void> {
+    const booking = await this.bookingModel.findById(bookingId).populate('user').populate('space').exec();
+    const manager = booking?.user as unknown as { name?: string; email?: string } | undefined;
+    const space = booking?.space as unknown as { name?: string } | undefined;
+    const amountLabel = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(amount || 0);
+
+    await this.notificationsService.create({
+      audience: 'admin',
+      title: 'Pagamento confermato',
+      message: `${manager?.name || manager?.email || 'Gestore'} ha confermato un pagamento di ${amountLabel} per ${space?.name || 'uno spazio'} del ${this.formatNotificationDate(booking?.date || new Date())}. Metodo: ${this.getPaymentMethodLabel(method)}.`,
+      type: 'payment_confirmed',
+      link: this.monthLink('/payments', booking?.date || new Date()),
+    });
+  }
+
+  private getPaymentMethodLabel(method: string): string {
+    const labels: Record<string, string> = {
+      manual: 'Pagamento manuale',
+      stripe: 'Stripe',
+      paypal: 'PayPal',
+      nexi: 'Nexi',
+      card: 'Carta',
+      cash: 'Contanti',
+      wallet: 'Wallet',
+    };
+
+    return labels[String(method || '').toLowerCase()] || method || 'Pagamento';
+  }
+
+  private monthLink(basePath: string, value: string | Date): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return basePath;
+    }
+
+    return `${basePath}?month=${date.getMonth() + 1}&year=${date.getFullYear()}`;
+  }
+
+  private formatNotificationDate(value: string | Date): string {
+    return new Date(value).toLocaleDateString('it-IT', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
   }
 
   private async createStripeCheckout(

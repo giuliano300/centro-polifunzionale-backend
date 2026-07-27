@@ -48,6 +48,17 @@ export class DashboardService {
       pendingCourseBookings,
       paidRevenue,
       monthRevenue,
+      walletUsed,
+      monthWalletUsed,
+      bookingWalletUsed,
+      monthBookingWalletUsed,
+      courseWalletUsed,
+      monthCourseWalletUsed,
+      coursePaidRevenue,
+      monthCoursePaidRevenue,
+      monthCourseDatePaidRevenue,
+      monthCourseDateWalletUsed,
+      pendingCoursePayments,
       pendingPayments,
       recentUsers,
       recentBookings,
@@ -76,6 +87,17 @@ export class DashboardService {
       this.courseBookingModel.countDocuments({ status: 'pending' }).exec(),
       this.sumPayments({ status: 'PAID' }),
       this.sumPayments({ status: 'PAID', createdAt: { $gte: monthStart, $lt: nextMonthStart } }),
+      this.sumWalletUsed(),
+      this.sumWalletUsed({ createdAt: { $gte: monthStart, $lt: nextMonthStart } }),
+      this.sumBookingWalletUsed(),
+      this.sumBookingWalletUsed({ createdAt: { $gte: monthStart, $lt: nextMonthStart } }),
+      this.sumCourseWalletUsed(),
+      this.sumCourseWalletUsed({ createdAt: { $gte: monthStart, $lt: nextMonthStart } }),
+      this.sumCoursePayments({ paymentStatus: 'PAID' }),
+      this.sumCoursePayments({ paymentStatus: 'PAID', createdAt: { $gte: monthStart, $lt: nextMonthStart } }),
+      this.sumCoursePaymentsByCourseDate(monthStart, nextMonthStart),
+      this.sumCourseWalletUsedByCourseDate(monthStart, nextMonthStart),
+      this.courseBookingModel.countDocuments({ paymentStatus: 'PENDING' }).exec(),
       this.sumPayments({ status: 'PENDING' }),
       this.userModel.find({ role: { $ne: UserRole.Admin } }).sort({ _id: -1 }).limit(6).select('-password').exec(),
       this.bookingModel.find().sort({ _id: -1 }).limit(6).populate('user').populate('space').exec(),
@@ -109,7 +131,21 @@ export class DashboardService {
         { $project: { _id: 0, status: '$_id', count: 1 } },
       ]).exec(),
       this.paymentModel.aggregate([
-        { $group: { _id: '$status', count: { $sum: 1 }, amount: { $sum: '$amount' } } },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 },
+            amount: {
+              $sum: {
+                $cond: [
+                  { $gt: ['$externalAmount', 0] },
+                  '$externalAmount',
+                  { $max: [{ $subtract: ['$amount', { $ifNull: ['$walletAmount', 0] }] }, 0] },
+                ],
+              },
+            },
+          },
+        },
         { $project: { _id: 0, status: '$_id', count: 1, amount: 1 } },
       ]).exec(),
       this.courseBookingModel.aggregate([
@@ -139,6 +175,17 @@ export class DashboardService {
         pendingCourseBookings,
         paidRevenue,
         monthRevenue,
+        walletUsed,
+        monthWalletUsed,
+        bookingWalletUsed,
+        monthBookingWalletUsed,
+        courseWalletUsed,
+        monthCourseWalletUsed,
+        coursePaidRevenue,
+        monthCoursePaidRevenue,
+        monthCourseDatePaidRevenue,
+        monthCourseDateWalletUsed,
+        pendingCoursePayments,
         pendingPayments,
       },
       breakdowns: {
@@ -169,7 +216,106 @@ export class DashboardService {
   private async sumPayments(match: Record<string, unknown>): Promise<number> {
     const result = await this.paymentModel.aggregate([
       { $match: match },
-      { $group: { _id: null, amount: { $sum: '$amount' } } },
+      {
+        $group: {
+          _id: null,
+          amount: {
+            $sum: {
+              $cond: [
+                { $gt: ['$externalAmount', 0] },
+                '$externalAmount',
+                { $max: [{ $subtract: ['$amount', { $ifNull: ['$walletAmount', 0] }] }, 0] },
+              ],
+            },
+          },
+        },
+      },
+    ]).exec();
+
+    return result[0]?.amount || 0;
+  }
+
+  private async sumWalletUsed(match: Record<string, unknown> = {}): Promise<number> {
+    const [bookingPayments, coursePayments] = await Promise.all([
+      this.sumBookingWalletUsed(match),
+      this.sumCourseWalletUsed(match),
+    ]);
+
+    return bookingPayments + coursePayments;
+  }
+
+  private async sumBookingWalletUsed(match: Record<string, unknown> = {}): Promise<number> {
+    const result = await this.paymentModel.aggregate([
+      { $match: { status: 'PAID', ...match } },
+      { $group: { _id: null, amount: { $sum: { $ifNull: ['$walletAmount', 0] } } } },
+    ]).exec();
+
+    return result[0]?.amount || 0;
+  }
+
+  private async sumCourseWalletUsed(match: Record<string, unknown> = {}): Promise<number> {
+    const result = await this.courseBookingModel.aggregate([
+      { $match: { paymentStatus: 'PAID', ...match } },
+      { $group: { _id: null, amount: { $sum: { $ifNull: ['$walletAmount', 0] } } } },
+    ]).exec();
+
+    return result[0]?.amount || 0;
+  }
+
+  private async sumCoursePayments(match: Record<string, unknown>): Promise<number> {
+    const result = await this.courseBookingModel.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          amount: {
+            $sum: {
+              $cond: [
+                { $gt: ['$externalAmount', 0] },
+                '$externalAmount',
+                { $max: [{ $subtract: ['$amount', { $ifNull: ['$walletAmount', 0] }] }, 0] },
+              ],
+            },
+          },
+        },
+      },
+    ]).exec();
+
+    return result[0]?.amount || 0;
+  }
+
+  private async sumCoursePaymentsByCourseDate(start: Date, end: Date): Promise<number> {
+    const result = await this.courseBookingModel.aggregate([
+      { $match: { paymentStatus: 'PAID' } },
+      { $lookup: { from: 'courses', localField: 'course', foreignField: '_id', as: 'courseDetails' } },
+      { $unwind: '$courseDetails' },
+      { $match: { 'courseDetails.date': { $gte: start, $lt: end } } },
+      {
+        $group: {
+          _id: null,
+          amount: {
+            $sum: {
+              $cond: [
+                { $gt: ['$externalAmount', 0] },
+                '$externalAmount',
+                { $max: [{ $subtract: ['$amount', { $ifNull: ['$walletAmount', 0] }] }, 0] },
+              ],
+            },
+          },
+        },
+      },
+    ]).exec();
+
+    return result[0]?.amount || 0;
+  }
+
+  private async sumCourseWalletUsedByCourseDate(start: Date, end: Date): Promise<number> {
+    const result = await this.courseBookingModel.aggregate([
+      { $match: { paymentStatus: 'PAID' } },
+      { $lookup: { from: 'courses', localField: 'course', foreignField: '_id', as: 'courseDetails' } },
+      { $unwind: '$courseDetails' },
+      { $match: { 'courseDetails.date': { $gte: start, $lt: end } } },
+      { $group: { _id: null, amount: { $sum: { $ifNull: ['$walletAmount', 0] } } } },
     ]).exec();
 
     return result[0]?.amount || 0;

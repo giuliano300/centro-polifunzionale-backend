@@ -1,6 +1,7 @@
 import { Prop, SchemaFactory,Schema } from "@nestjs/mongoose";
 import mongoose from "mongoose";
 import { Document } from 'mongoose';
+import { PaymentMethod, PAYMENT_METHOD_VALUES } from "src/payments/payment-method.enum";
 
 @Schema({ timestamps: true })
 export class CourseBooking extends Document {
@@ -36,6 +37,9 @@ export class CourseBooking extends Document {
 
   @Prop()
   discountCode?: string;
+
+  @Prop({ enum: PAYMENT_METHOD_VALUES })
+  paymentMethod?: PaymentMethod;
 
   @Prop({ required: true, enum: ['PENDING', 'PAID', 'FREE'], default: 'FREE' })
   paymentStatus: 'PENDING' | 'PAID' | 'FREE';

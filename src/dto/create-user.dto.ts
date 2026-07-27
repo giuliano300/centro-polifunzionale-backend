@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from '../roles/user-role.enum';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -35,4 +35,10 @@ export class CreateUserDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiProperty({ example: ['yoga', 'fitness'], description: 'Tag di interesse cliente', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interestedTags?: string[];
 }

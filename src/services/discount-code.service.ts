@@ -49,11 +49,18 @@ export class DiscountCodeService {
     userContext?: { role?: string; createdAt?: Date | string; monthlyPurchaseCount?: number },
   ): Promise<{ code?: string; amount: number }> {
     const normalizedCode = code?.trim().toUpperCase();
-    if (!normalizedCode || amount <= 0) {
+    if (amount <= 0) {
       return { amount: 0 };
     }
 
-    const discount = await this.discountModel.findOne({ code: normalizedCode }).exec();
+    const discount = normalizedCode
+      ? await this.discountModel.findOne({ code: normalizedCode }).exec()
+      : await this.bestAutomaticDiscount(target, amount, spaceId, operationDate, userContext);
+
+    if (!normalizedCode && !discount) {
+      return { amount: 0 };
+    }
+
     if (!discount || !discount.isActive) {
       throw new BadRequestException('Codice sconto non valido');
     }
@@ -110,9 +117,17 @@ export class DiscountCodeService {
   }
 
   private normalize(dto: CreateDiscountCodeDto | UpdateDiscountCodeDto): Partial<DiscountCode> {
+    const isAutomatic = dto.isAutomatic === true;
+    if (!isAutomatic && !dto.code?.trim()) {
+      throw new BadRequestException('Inserisci un codice per le promo non automatiche');
+    }
+    const code = dto.code?.trim().toUpperCase() || this.generateAutomaticCode();
     return {
       ...dto,
-      code: dto.code?.trim().toUpperCase(),
+      code,
+      title: dto.title?.trim(),
+      description: dto.description?.trim(),
+      isAutomatic,
       target: dto.target || 'all',
       spaces: dto.spaceIds?.length ? dto.spaceIds.map((id) => new Types.ObjectId(id)) : [],
       userRoles: dto.userRoles || [],
@@ -123,6 +138,62 @@ export class DiscountCodeService {
       validFrom: dto.validFrom ? this.startOfDay(dto.validFrom) : undefined,
       validTo: dto.validTo ? this.endOfDay(dto.validTo) : undefined,
     };
+  }
+
+  private async bestAutomaticDiscount(
+    target: 'booking' | 'course',
+    amount: number,
+    spaceId?: string,
+    operationDate?: string | Date,
+    userContext?: { role?: string; createdAt?: Date | string; monthlyPurchaseCount?: number },
+  ): Promise<DiscountCodeDocument | null> {
+    const candidates = await this.discountModel.find({ isAutomatic: true, isActive: true }).exec();
+    let best: { discount: DiscountCodeDocument; amount: number } | null = null;
+
+    for (const discount of candidates) {
+      const discountAmount = this.safeDiscountAmount(discount, target, amount, spaceId, operationDate, userContext);
+      if (discountAmount <= 0) {
+        continue;
+      }
+      if (!best || discountAmount > best.amount) {
+        best = { discount, amount: discountAmount };
+      }
+    }
+
+    return best?.discount || null;
+  }
+
+  private safeDiscountAmount(
+    discount: DiscountCodeDocument,
+    target: 'booking' | 'course',
+    amount: number,
+    spaceId?: string,
+    operationDate?: string | Date,
+    userContext?: { role?: string; createdAt?: Date | string; monthlyPurchaseCount?: number },
+  ): number {
+    try {
+      if (discount.target !== 'all' && discount.target !== target) return 0;
+      if (discount.spaces?.length && !discount.spaces.some((space) => space.toString() === spaceId)) return 0;
+      if (discount.userRoles?.length && (!userContext?.role || !discount.userRoles.includes(userContext.role))) return 0;
+      if (discount.rule === 'new_user') {
+        const createdAt = userContext?.createdAt ? new Date(userContext.createdAt) : null;
+        const maxAgeMs = Math.max(Number(discount.newUserDays || 30), 1) * 24 * 60 * 60 * 1000;
+        if (!createdAt || Date.now() - createdAt.getTime() > maxAgeMs) return 0;
+      }
+      if (discount.rule === 'monthly_purchases' && Number(userContext?.monthlyPurchaseCount || 0) < Number(discount.monthlyPurchaseMin || 0)) return 0;
+      const targetDate = operationDate ? new Date(operationDate) : new Date();
+      if (discount.validFrom && discount.validFrom > targetDate) return 0;
+      if (discount.validTo && discount.validTo < targetDate) return 0;
+      if (discount.maxUses && discount.usedCount >= discount.maxUses) return 0;
+      const rawDiscount = discount.type === 'percentage' ? amount * (discount.value / 100) : discount.value;
+      return Math.min(Math.max(Number(rawDiscount.toFixed(2)), 0), amount);
+    } catch {
+      return 0;
+    }
+  }
+
+  private generateAutomaticCode(): string {
+    return `PROMO-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
   }
 
   private startOfDay(value: string): Date {

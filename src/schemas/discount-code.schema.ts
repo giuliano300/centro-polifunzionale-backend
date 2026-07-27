@@ -9,6 +9,15 @@ export class DiscountCode {
   @Prop({ required: true, unique: true, uppercase: true, trim: true })
   code: string;
 
+  @Prop({ trim: true })
+  title?: string;
+
+  @Prop({ trim: true })
+  description?: string;
+
+  @Prop({ default: false })
+  isAutomatic: boolean;
+
   @Prop({ required: true, enum: ['percentage', 'fixed'] })
   type: 'percentage' | 'fixed';
 

@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { Roles, UserRole } from "../../roles/roles.decorator";
 import { RolesGuard } from "../../roles/roles.guard";
 import { AuthGuard } from "@nestjs/passport";
 import { CreateCourseBookingDto } from "src/dto/create-course-booking.dto";
+import { UpdateCourseBookingPaymentMethodDto } from "src/dto/update-course-booking-payment-method.dto";
 import { CourseBookingsService } from "src/services/course-booking.service";
 import { FilterCourseBookingDto } from "src/filters/filter-course-booking.dto";
 
@@ -39,6 +40,13 @@ export class CourseBookingsController {
   @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async remove(@Param('id') id: string, @Req() req) {
     return this.courseBookingsService.remove(id, req.user.role === UserRole.Cliente ? req.user.userId : undefined);
+  }
+
+  @Patch(':id/payment-method')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
+  async updatePaymentMethod(@Param('id') id: string, @Body() dto: UpdateCourseBookingPaymentMethodDto, @Req() req) {
+    return this.courseBookingsService.updatePaymentMethod(id, dto.paymentMethod, req.user.role === UserRole.Cliente ? req.user.userId : undefined);
   }
 
 }

@@ -54,6 +54,13 @@ export class UsersController {
   async requestProfilePhoneOtp(@Req() req, @Body() dto: { phone: string }): Promise<{ requested: boolean; phone: string; expiresInMinutes: number; devPhoneOtp?: string }> {
     return this.usersService.requestProfilePhoneOtp(req.user.userId, dto.phone);
   }
+
+  @Post('me/request-manager-upgrade')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Cliente)
+  async requestManagerUpgrade(@Req() req): Promise<{ requested: boolean }> {
+    return this.usersService.requestManagerUpgrade(req.user.userId);
+  }
   
   @Get('email/:email')
   @UseGuards(AuthGuard('jwt'), RolesGuard)

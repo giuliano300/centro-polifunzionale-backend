@@ -10,7 +10,7 @@ export class WalletController {
 
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.Admin, UserRole.Gestore)
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async summary(@Req() req, @Query('userId') userId?: string) {
     const targetUserId = req.user.role === UserRole.Admin && userId ? userId : req.user.userId;
     return this.walletService.summary(targetUserId);

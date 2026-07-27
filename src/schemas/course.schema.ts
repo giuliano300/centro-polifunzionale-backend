@@ -1,6 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
 import { Booking } from './booking.schema';
+import { COURSE_TAG_VALUES, CourseTag } from 'src/courses/course-tag.enum';
+import { COURSE_APPROVAL_STATUS_VALUES, CourseApprovalStatus } from 'src/courses/course-approval-status.enum';
 
 // course.schema.ts
 @Schema()
@@ -10,6 +12,27 @@ export class Course {
 
   @Prop()
   description: string;
+
+  @Prop({ type: [String], enum: COURSE_TAG_VALUES, default: [] })
+  tags: CourseTag[];
+
+  @Prop()
+  imageUrl?: string;
+
+  @Prop({ type: { x: Number, y: Number, scale: Number }, default: { x: 0, y: 0, scale: 1 } })
+  imageCrop?: { x: number; y: number; scale: number };
+
+  @Prop()
+  bannerImageUrl?: string;
+
+  @Prop({ type: { x: Number, y: Number, scale: Number }, default: { x: 0, y: 0, scale: 1 } })
+  bannerImageCrop?: { x: number; y: number; scale: number };
+
+  @Prop()
+  cardImageUrl?: string;
+
+  @Prop({ type: { x: Number, y: Number, scale: Number }, default: { x: 0, y: 0, scale: 1 } })
+  cardImageCrop?: { x: number; y: number; scale: number };
 
   @Prop({ required: true })
   date: Date;
@@ -34,6 +57,15 @@ export class Course {
 
   @Prop({ default: true })
   isPublished: boolean;
+
+  @Prop({ enum: COURSE_APPROVAL_STATUS_VALUES, default: CourseApprovalStatus.Pending })
+  approvalStatus: CourseApprovalStatus;
+
+  @Prop()
+  approvedAt?: Date;
+
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'User' })
+  approvedBy?: mongoose.Types.ObjectId;
 
   @Prop({ default: [], type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] })
   participants: mongoose.Types.ObjectId[];

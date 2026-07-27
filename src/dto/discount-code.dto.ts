@@ -1,8 +1,21 @@
 import { IsArray, IsBoolean, IsIn, IsMongoId, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateDiscountCodeDto {
+  @IsOptional()
   @IsString()
-  code: string;
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isAutomatic?: boolean;
 
   @IsIn(['percentage', 'fixed'])
   type: 'percentage' | 'fixed';

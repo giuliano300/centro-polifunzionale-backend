@@ -9,9 +9,11 @@ import { User, UserDocument } from 'src/schemas/user.schema';
 import { NotificationsService } from './notifications.service';
 import { WalletService } from './wallet.service';
 import { DiscountCodeService } from './discount-code.service';
+import { DEFAULT_PAYMENT_METHODS, PaymentMethod } from 'src/payments/payment-method.enum';
 
 type PopulatedCourseBooking = CourseBooking & {
   course?: {
+    date?: Date | string;
     booking?: {
       status?: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled';
       user?: { _id?: string } | string;
@@ -32,12 +34,17 @@ export class CourseBookingsService {
 
   async create(dto: CreateCourseBookingDto, userId: string): Promise<CourseBooking> {
     const targetUserId = dto.userId || userId;
-    const course = await this.courseModel.findById(dto.courseId).populate('booking').exec();
+    const course = await this.courseModel.findById(dto.courseId)
+      .populate({ path: 'booking', populate: { path: 'space' } })
+      .exec();
     if (!course) {
       throw new NotFoundException('Corso non trovato');
     }
 
-    const spaceBooking = course.booking as unknown as { status?: string; space?: { toString(): string } | string } | undefined;
+    const spaceBooking = course.booking as unknown as {
+      status?: string;
+      space?: { _id?: string; paymentMethods?: PaymentMethod[]; toString(): string } | string;
+    } | undefined;
     if (spaceBooking?.status === 'cancelled') {
       throw new BadRequestException('Non puoi iscriverti a un corso collegato a una prenotazione annullata');
     }
@@ -58,7 +65,7 @@ export class CourseBookingsService {
 
     const bookedSeats = await this.courseBookingModel.countDocuments({
       course: new Types.ObjectId(dto.courseId),
-      status: { $ne: 'cancelled' },
+      status: 'confirmed',
     }).exec();
 
     if (bookedSeats >= course.capacity) {
@@ -70,7 +77,7 @@ export class CourseBookingsService {
     const originalAmount = course.enrollmentType === 'free' ? 0 : course.price;
     const courseSpaceId = typeof spaceBooking?.space === 'string'
       ? spaceBooking.space
-      : spaceBooking?.space?.toString();
+      : spaceBooking?.space?._id?.toString() || spaceBooking?.space?.toString();
     const discount = await this.discountCodeService.apply(dto.discountCode, 'course', originalAmount, courseSpaceId, course.date, {
       role: user?.role,
       createdAt: (user as unknown as { createdAt?: Date })?.createdAt,
@@ -80,11 +87,20 @@ export class CourseBookingsService {
     const walletBalance = totalAmount > 0 ? Math.max(await this.walletService.balance(targetUserId), 0) : 0;
     const walletAmount = Math.min(walletBalance, totalAmount);
     const externalAmount = Math.max(totalAmount - walletAmount, 0);
+    const isManualEnrollment = !!dto.userId && dto.userId !== userId;
+    const paymentMethod = externalAmount > 0 ? dto.paymentMethod || (isManualEnrollment ? PaymentMethod.Cash : undefined) : undefined;
+    if (externalAmount > 0 && !paymentMethod) {
+      throw new BadRequestException('Seleziona un metodo di pagamento');
+    }
+    if (paymentMethod) {
+      this.assertCoursePaymentMethodAllowed(spaceBooking?.space, paymentMethod);
+    }
+    const isExternalPaymentRegistered = paymentMethod === PaymentMethod.Cash;
 
     const booking = new this.courseBookingModel({
       user: new Types.ObjectId(targetUserId),
       course: new Types.ObjectId(dto.courseId),
-      status: course.enrollmentType === 'free' || externalAmount <= 0 ? 'confirmed' : 'pending',
+      status: course.enrollmentType === 'free' || externalAmount <= 0 || isExternalPaymentRegistered ? 'confirmed' : 'pending',
       enrollmentType: course.enrollmentType,
       amount: externalAmount,
       totalAmount,
@@ -93,9 +109,15 @@ export class CourseBookingsService {
       originalAmount,
       discountAmount: discount.amount,
       discountCode: discount.code,
-      paymentStatus: course.enrollmentType === 'free' ? 'FREE' : externalAmount <= 0 ? 'PAID' : 'PENDING',
+      paymentMethod,
+      paymentStatus: course.enrollmentType === 'free' ? 'FREE' : externalAmount <= 0 || isExternalPaymentRegistered ? 'PAID' : 'PENDING',
     });
     const saved = await booking.save();
+    if (saved.status === 'confirmed') {
+      await this.courseModel.findByIdAndUpdate(dto.courseId, {
+        $addToSet: { participants: new Types.ObjectId(targetUserId) },
+      }).exec();
+    }
     await this.discountCodeService.markUsed(discount.code);
     if (walletAmount > 0) {
       await this.walletService.debitCoursePayment(
@@ -121,7 +143,7 @@ export class CourseBookingsService {
         user?: { name?: string; email?: string };
         course?: {
           booking?: {
-            user?: { name?: string; email?: string };
+            user?: { _id?: string; name?: string; email?: string };
             space?: { name?: string };
           };
         };
@@ -129,13 +151,26 @@ export class CourseBookingsService {
     const subscriber = populated?.user;
     const manager = populated?.course?.booking?.user;
     const space = populated?.course?.booking?.space;
+    const courseId = (course as unknown as { _id: Types.ObjectId })._id.toString();
+    const courseDateLabel = this.formatNotificationDate(course.date);
     await this.notificationsService.create({
       audience: 'admin',
       title: 'Nuova iscrizione corso',
-      message: `${subscriber?.name || subscriber?.email || 'Cliente'} si e iscritto a "${course.title}" di ${manager?.name || manager?.email || 'Gestore'} in ${space?.name || 'uno spazio'} per il ${this.formatNotificationDate(course.date)}.`,
+      message: `${subscriber?.name || subscriber?.email || 'Cliente'} si e iscritto a "${course.title}" di ${manager?.name || manager?.email || 'Gestore'} in ${space?.name || 'uno spazio'} per il ${courseDateLabel}.`,
       type: 'course_booking_created',
-      link: '/course-bookings',
+      link: `/course-bookings?courseId=${courseId}`,
     });
+    const managerId = manager?._id?.toString();
+    if (managerId) {
+      await this.notificationsService.create({
+        audience: 'gestore',
+        userId: managerId,
+        title: 'Nuova iscrizione corso',
+        message: `${subscriber?.name || subscriber?.email || 'Cliente'} si e iscritto a "${course.title}" in ${space?.name || 'uno spazio'} per il ${courseDateLabel}.`,
+        type: 'course_booking_created',
+        link: `/courses?courseId=${courseId}`,
+      });
+    }
     return saved;
   }
 
@@ -144,6 +179,7 @@ export class CourseBookingsService {
     if (filters.userId) query.user = new Types.ObjectId(filters.userId);
     if (filters.courseId) query.course = new Types.ObjectId(filters.courseId);
     if (filters.status) query.status = filters.status;
+    if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
     let courseBookings = await this.courseBookingModel.find(query).sort({ createdAt: -1, _id: -1 }).populate('user').populate({
       path: 'course',
       populate: {
@@ -171,6 +207,25 @@ export class CourseBookingsService {
       return status !== 'cancelled' && status !== 'cancellation_requested';
     });
 
+    if (filters.start || filters.end) {
+      const start = filters.start ? new Date(filters.start).getTime() : null;
+      const end = filters.end ? new Date(filters.end).getTime() : null;
+      courseBookings = courseBookings.filter((item) => {
+        const course = item.course || null;
+        const courseDate = course?.date ? new Date(course.date).getTime() : null;
+        if (!courseDate) {
+          return false;
+        }
+        if (start !== null && courseDate < start) {
+          return false;
+        }
+        if (end !== null && courseDate >= end) {
+          return false;
+        }
+        return true;
+      });
+    }
+
     return courseBookings as unknown as CourseBooking[];
   }
 
@@ -184,8 +239,56 @@ export class CourseBookingsService {
       throw new ForbiddenException('Iscrizione corso non accessibile');
     }
 
+    await this.courseModel.findByIdAndUpdate(courseBooking.course, {
+      $pull: { participants: new Types.ObjectId(courseBooking.user.toString()) },
+    }).exec();
     await this.courseBookingModel.findByIdAndDelete(id).exec();
     return { deleted: true };
+  }
+
+  async updatePaymentMethod(id: string, paymentMethod: PaymentMethod, allowedUserId?: string): Promise<CourseBooking> {
+    const courseBooking = await this.courseBookingModel.findById(id).populate({
+      path: 'course',
+      populate: {
+        path: 'booking',
+        populate: { path: 'space' },
+      },
+    }).exec() as unknown as (CourseBooking & {
+      course?: {
+        booking?: {
+          space?: { paymentMethods?: PaymentMethod[] } | string;
+        };
+      };
+    }) | null;
+    if (!courseBooking) {
+      throw new NotFoundException('Iscrizione corso non trovata');
+    }
+
+    if (allowedUserId && courseBooking.user.toString() !== allowedUserId) {
+      throw new ForbiddenException('Iscrizione corso non accessibile');
+    }
+
+    const externalAmount = Number(courseBooking.externalAmount || courseBooking.amount || 0);
+    if (externalAmount <= 0) {
+      throw new BadRequestException('Questa iscrizione non ha un pagamento esterno da modificare');
+    }
+
+    if (courseBooking.paymentStatus !== 'PENDING') {
+      throw new BadRequestException('Il metodo di pagamento puo essere modificato solo sui pagamenti da completare');
+    }
+
+    const populatedCourse = courseBooking.course as unknown as { booking?: { space?: { paymentMethods?: PaymentMethod[] } | string } };
+    const space = populatedCourse?.booking?.space;
+    this.assertCoursePaymentMethodAllowed(space, paymentMethod);
+    courseBooking.paymentMethod = paymentMethod;
+    if (paymentMethod === PaymentMethod.Cash) {
+      courseBooking.status = 'confirmed';
+      courseBooking.paymentStatus = 'PAID';
+      await this.courseModel.findByIdAndUpdate(courseBooking.course, {
+        $addToSet: { participants: new Types.ObjectId(courseBooking.user.toString()) },
+      }).exec();
+    }
+    return courseBooking.save();
   }
 
   private formatNotificationDate(value: string | Date): string {
@@ -201,5 +304,13 @@ export class CourseBookingsService {
       createdAt: { $gte: start, $lt: end },
       status: { $ne: 'cancelled' },
     }).exec();
+  }
+
+  private assertCoursePaymentMethodAllowed(space: unknown, method: PaymentMethod): void {
+    const normalizedSpace = typeof space === 'string' ? null : space as { paymentMethods?: PaymentMethod[] } | null;
+    const paymentMethods = normalizedSpace?.paymentMethods?.length ? normalizedSpace.paymentMethods : DEFAULT_PAYMENT_METHODS;
+    if (!paymentMethods.includes(method)) {
+      throw new BadRequestException('Metodo di pagamento non disponibile per questo spazio');
+    }
   }
 }

@@ -8,6 +8,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ManagerRegistrationOtp, ManagerRegistrationOtpSchema } from 'src/schemas/manager-registration-otp.schema';
 import { ManagerPasswordReset, ManagerPasswordResetSchema } from 'src/schemas/manager-password-reset.schema';
+import { ClientRegistrationOtp, ClientRegistrationOtpSchema } from 'src/schemas/client-registration-otp.schema';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ManagerPasswordReset, ManagerPasswordResetSchema } from 'src/schemas/ma
     MongooseModule.forFeature([
       { name: ManagerRegistrationOtp.name, schema: ManagerRegistrationOtpSchema },
       { name: ManagerPasswordReset.name, schema: ManagerPasswordResetSchema },
+      { name: ClientRegistrationOtp.name, schema: ClientRegistrationOtpSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({

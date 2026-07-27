@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsOptional, IsString } from "class-validator";
 import { UserRole } from "src/roles/user-role.enum";
 
 // dto/update-user.dto.ts
@@ -34,4 +34,9 @@ export class UpdateUserDto {
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interestedTags?: string[];
 }

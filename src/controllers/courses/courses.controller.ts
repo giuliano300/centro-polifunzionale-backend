@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { CourseService } from "../../services/course.service";
 import { CreateCourseDto } from "../../dto/create-course.dto";
 import { UpdateCourseDto } from "../../dto/update-course.dto";
 import { AuthGuard } from "@nestjs/passport";
 import { Roles, UserRole } from "src/roles/roles.decorator";
 import { RolesGuard } from "src/roles/roles.guard";
+import { FileInterceptor } from "@nestjs/platform-express";
 
 @Controller('courses')
 export class CoursesController {
@@ -15,6 +16,14 @@ export class CoursesController {
   @Roles(UserRole.Admin, UserRole.Gestore)
   create(@Body() dto: CreateCourseDto, @Req() req) {
     return this.courseService.create(dto, req.user.role === UserRole.Gestore ? req.user.userId : undefined);
+  }
+
+  @Post('upload-image')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  @UseInterceptors(FileInterceptor('image'))
+  uploadImage(@UploadedFile() file: any, @Query('type') type?: 'banner' | 'card') {
+    return this.courseService.saveCourseImage(file, type === 'card' ? 'card' : 'banner');
   }
 
   @Get()
@@ -39,6 +48,27 @@ export class CoursesController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.courseService.findOne(id);
+  }
+
+  @Patch(':id/approve')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin)
+  approve(@Param('id') id: string, @Req() req) {
+    return this.courseService.approve(id, req.user.userId);
+  }
+
+  @Patch(':id/close')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin)
+  close(@Param('id') id: string) {
+    return this.courseService.close(id);
+  }
+
+  @Patch(':id/reject')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin)
+  reject(@Param('id') id: string) {
+    return this.courseService.reject(id);
   }
 
   @Patch(':id')

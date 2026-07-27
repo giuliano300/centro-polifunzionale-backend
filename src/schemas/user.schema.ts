@@ -57,6 +57,9 @@ export class User {
 
   @Prop()
   profilePhoneOtpExpiresAt?: Date;
+
+  @Prop({ type: [String], default: [] })
+  interestedTags: string[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

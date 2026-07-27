@@ -1,4 +1,5 @@
-import { IsMongoId, IsOptional, IsString } from "class-validator";
+import { IsEnum, IsMongoId, IsOptional, IsString } from "class-validator";
+import { PaymentMethod } from "src/payments/payment-method.enum";
 
 export class CreateCourseBookingDto {
   @IsMongoId()
@@ -15,4 +16,8 @@ export class CreateCourseBookingDto {
   @IsOptional()
   @IsString()
   discountCode?: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

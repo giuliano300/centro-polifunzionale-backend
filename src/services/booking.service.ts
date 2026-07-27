@@ -114,7 +114,7 @@ export class BookingService {
       title: 'Nuovo acquisto spazio',
       message: `${manager?.name || manager?.email || 'Gestore'} ha acquistato ${space.name} per il ${this.formatNotificationDate(savedBooking.date)}.`,
       type: 'booking_created',
-      link: '/bookings',
+      link: this.monthLink('/bookings', savedBooking.date),
     });
     return savedBooking;
   }
@@ -632,5 +632,14 @@ export class BookingService {
       throw new NotFoundException(`Booking #${id} not found`);
     }
     return { deleted: true };
+  }
+
+  private monthLink(basePath: string, value: string | Date): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return basePath;
+    }
+
+    return `${basePath}?month=${date.getMonth() + 1}&year=${date.getFullYear()}`;
   }
 }

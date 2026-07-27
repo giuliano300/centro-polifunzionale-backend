@@ -6,6 +6,7 @@ import { ResetPasswordDto } from 'src/dto/reset-password.dto';
 import { ConfirmManagerRegistrationOtpDto, RequestManagerRegistrationOtpDto } from 'src/dto/manager-registration.dto';
 import { ConfirmManagerPasswordResetDto, RequestManagerPasswordResetDto } from 'src/dto/manager-password-reset.dto';
 import { CompleteClientInviteDto, RequestClientInvitePhoneOtpDto } from 'src/dto/client-invite.dto';
+import { ConfirmClientRegistrationOtpDto, RequestClientRegistrationOtpDto } from 'src/dto/client-registration.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -41,6 +42,26 @@ export class AuthController {
   @Post('manager/password-reset/confirm')
   async confirmManagerPasswordReset(@Body() dto: ConfirmManagerPasswordResetDto) {
     return this.authService.confirmManagerPasswordReset(dto);
+  }
+
+  @Post('client/password-reset/request-link')
+  async requestClientPasswordReset(@Body() dto: RequestManagerPasswordResetDto) {
+    return this.authService.requestClientPasswordReset(dto);
+  }
+
+  @Post('client/password-reset/confirm')
+  async confirmClientPasswordReset(@Body() dto: ConfirmManagerPasswordResetDto) {
+    return this.authService.confirmClientPasswordReset(dto);
+  }
+
+  @Post('client/register/request-otp')
+  async requestClientRegistrationOtp(@Body() dto: RequestClientRegistrationOtpDto) {
+    return this.authService.requestClientRegistrationOtp(dto);
+  }
+
+  @Post('client/register/confirm-otp')
+  async confirmClientRegistrationOtp(@Body() dto: ConfirmClientRegistrationOtpDto) {
+    return this.authService.confirmClientRegistrationOtp(dto);
   }
 
   @Post('manager/register/request-otp')

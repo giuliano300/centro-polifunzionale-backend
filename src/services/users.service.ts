@@ -163,9 +163,14 @@ export class UsersService {
       completionTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
+    const role = dto.role === UserRole.Gestore ? UserRole.Gestore : UserRole.Cliente;
+    const frontendUrl = role === UserRole.Cliente
+      ? this.configService.get<string>('CLIENTE_FRONTEND_URL', 'http://localhost:4500')
+      : this.configService.get<string>('GESTORE_FRONTEND_URL', 'http://localhost:4400');
+
     return {
       user,
-      completeUrl: `${this.configService.get<string>('GESTORE_FRONTEND_URL', 'http://localhost:4400').replace(/\/$/, '')}/complete-registration?token=${encodeURIComponent(token)}`,
+      completeUrl: `${frontendUrl.replace(/\/$/, '')}/complete-registration?token=${encodeURIComponent(token)}`,
       sent: false,
     };
   }
@@ -176,8 +181,14 @@ export class UsersService {
     }
 
     const user = await this.findPendingInviteByToken(dto.token);
+    const email = dto.email.trim().toLowerCase();
+    if (email !== user.email) {
+      throw new BadRequestException('Email non coerente con il link di registrazione');
+    }
+
     const normalized = this.normalizeOptionalIdentityFields({
       name: dto.name,
+      email,
       phone: dto.phone || user.phone,
       taxCode: dto.taxCode || user.taxCode,
     });
@@ -204,6 +215,7 @@ export class UsersService {
     user.name = normalized.name;
     user.phone = normalized.phone;
     user.taxCode = normalized.taxCode;
+    user.interestedTags = this.normalizeTags(dto.interestedTags);
     user.password = await bcrypt.hash(dto.password, 10);
     user.isActive = true;
     user.registrationStatus = 'complete';
@@ -246,7 +258,7 @@ export class UsersService {
     };
   }
 
-  async getInviteDetails(token: string): Promise<Pick<User, 'name' | 'email' | 'phone' | 'taxCode' | 'role'> & { expiresAt?: Date }> {
+  async getInviteDetails(token: string): Promise<Pick<User, 'name' | 'email' | 'phone' | 'taxCode' | 'role' | 'interestedTags'> & { expiresAt?: Date }> {
     const user = await this.findPendingInviteByToken(token);
     return {
       name: user.name,
@@ -254,6 +266,7 @@ export class UsersService {
       phone: user.phone,
       taxCode: user.taxCode,
       role: user.role,
+      interestedTags: user.interestedTags,
       expiresAt: user.completionTokenExpiresAt,
     };
   }
@@ -306,6 +319,7 @@ export class UsersService {
       phone: normalizedPhone,
       taxCode: dto.taxCode,
       password: dto.password,
+      interestedTags: dto.interestedTags,
     };
 
     const updated = await this.update(id, allowedDto);
@@ -340,6 +354,23 @@ export class UsersService {
       expiresInMinutes: 10,
       devPhoneOtp: phoneOtp,
     };
+  }
+
+  async requestManagerUpgrade(id: string): Promise<{ requested: boolean }> {
+    const user = await this.findById(id);
+    if (user.role === UserRole.Gestore || user.role === UserRole.Admin) {
+      throw new BadRequestException('Il profilo ha gia accesso gestore');
+    }
+
+    await this.notificationsService.create({
+      audience: 'admin',
+      title: 'Richiesta upgrade gestore',
+      message: `${user.name || user.email} ha richiesto di diventare gestore.`,
+      type: 'manager_upgrade_requested',
+      link: `/users?search=${encodeURIComponent(user.email)}`,
+    });
+
+    return { requested: true };
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<User> {
@@ -402,6 +433,19 @@ export class UsersService {
       normalized.taxCode = normalized.taxCode.toUpperCase();
     }
     return normalized;
+  }
+
+  private normalizeTags(tags?: string[]): string[] {
+    if (!Array.isArray(tags)) {
+      return [];
+    }
+
+    return [...new Set(
+      tags
+        .map((tag) => String(tag || '').trim().toLowerCase())
+        .filter(Boolean)
+        .slice(0, 20),
+    )];
   }
 
   private normalizeItalianMobilePhone(phone: string): string {

@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from 'src/roles/user-role.enum';
 
 export class InviteClientDto {
@@ -28,6 +28,9 @@ export class CompleteClientInviteDto {
   @IsString()
   name: string;
 
+  @IsEmail()
+  email: string;
+
   @IsOptional()
   @IsString()
   phone?: string;
@@ -46,6 +49,11 @@ export class CompleteClientInviteDto {
   @IsOptional()
   @IsString()
   phoneOtp?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interestedTags?: string[];
 }
 
 export class RequestClientInvitePhoneOtpDto {

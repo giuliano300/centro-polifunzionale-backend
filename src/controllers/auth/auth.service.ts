@@ -12,6 +12,8 @@ import { ManagerRegistrationOtp, ManagerRegistrationOtpDocument } from 'src/sche
 import { ConfirmManagerRegistrationOtpDto, RequestManagerRegistrationOtpDto } from 'src/dto/manager-registration.dto';
 import { ManagerPasswordReset, ManagerPasswordResetDocument } from 'src/schemas/manager-password-reset.schema';
 import { ConfirmManagerPasswordResetDto, RequestManagerPasswordResetDto } from 'src/dto/manager-password-reset.dto';
+import { ClientRegistrationOtp, ClientRegistrationOtpDocument } from 'src/schemas/client-registration-otp.schema';
+import { ConfirmClientRegistrationOtpDto, RequestClientRegistrationOtpDto } from 'src/dto/client-registration.dto';
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from 'src/roles/user-role.enum';
@@ -24,6 +26,7 @@ export class AuthService {
     private jwtService: JwtService,
     @InjectModel(ManagerRegistrationOtp.name) private otpModel: Model<ManagerRegistrationOtpDocument>,
     @InjectModel(ManagerPasswordReset.name) private passwordResetModel: Model<ManagerPasswordResetDocument>,
+    @InjectModel(ClientRegistrationOtp.name) private clientOtpModel: Model<ClientRegistrationOtpDocument>,
     private configService: ConfigService,
   ) {}
 
@@ -102,6 +105,130 @@ export class AuthService {
     }
 
     throw new BadRequestException('Link scaduto o non valido');
+  }
+
+  async requestClientPasswordReset(dto: RequestManagerPasswordResetDto) {
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.usersService.findByEmail(email);
+    if (!user || user.role !== UserRole.Cliente) {
+      throw new BadRequestException('Email cliente non trovata');
+    }
+
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = await bcrypt.hash(token, 10);
+    await this.passwordResetModel.updateMany({ email, used: false }, { $set: { used: true } }).exec();
+    await this.passwordResetModel.create({
+      email,
+      tokenHash,
+      used: false,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    });
+
+    const frontUrl = this.configService.get<string>('CLIENTE_FRONTEND_URL', 'http://localhost:4500');
+    const resetUrl = `${frontUrl.replace(/\/$/, '')}/login?resetToken=${encodeURIComponent(token)}`;
+
+    return {
+      sent: false,
+      email,
+      expiresInMinutes: 30,
+      devResetUrl: resetUrl,
+    };
+  }
+
+  async confirmClientPasswordReset(dto: ConfirmManagerPasswordResetDto) {
+    const requests = await this.passwordResetModel
+      .find({ used: false, expiresAt: { $gt: new Date() } })
+      .sort({ createdAt: -1 })
+      .exec();
+
+    for (const request of requests) {
+      const isMatch = await bcrypt.compare(dto.token, request.tokenHash);
+      if (!isMatch) {
+        continue;
+      }
+
+      await this.usersService.resetPasswordByEmail(request.email, dto.password, [UserRole.Cliente]);
+      request.used = true;
+      await request.save();
+      return { updated: true, email: request.email };
+    }
+
+    throw new BadRequestException('Link scaduto o non valido');
+  }
+
+  async requestClientRegistrationOtp(dto: RequestClientRegistrationOtpDto) {
+    const normalized = this.normalizeClientRegistration(dto);
+    await this.usersService.assertUniqueIdentity(normalized.email, normalized.phone, normalized.taxCode);
+
+    const emailOtp = this.generateOtp();
+    const phoneOtp = this.generateOtp();
+    const [emailOtpHash, phoneOtpHash, passwordHash] = await Promise.all([
+      bcrypt.hash(emailOtp, 10),
+      bcrypt.hash(phoneOtp, 10),
+      bcrypt.hash(normalized.password, 10),
+    ]);
+
+    await this.clientOtpModel.deleteMany({ email: normalized.email }).exec();
+    await this.clientOtpModel.create({
+      ...normalized,
+      passwordHash,
+      emailOtpHash,
+      phoneOtpHash,
+      attempts: 0,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    return {
+      requested: true,
+      email: normalized.email,
+      phone: normalized.phone,
+      expiresInMinutes: 10,
+      devEmailOtp: emailOtp,
+      devPhoneOtp: phoneOtp,
+    };
+  }
+
+  async confirmClientRegistrationOtp(dto: ConfirmClientRegistrationOtpDto) {
+    const email = dto.email.trim().toLowerCase();
+    const request = await this.clientOtpModel.findOne({ email }).sort({ createdAt: -1 }).exec();
+    if (!request || request.expiresAt.getTime() < Date.now()) {
+      throw new BadRequestException('OTP scaduto o non valido');
+    }
+
+    if (request.attempts >= 5) {
+      await this.clientOtpModel.deleteOne({ _id: request._id }).exec();
+      throw new BadRequestException('Troppi tentativi. Richiedi un nuovo OTP');
+    }
+
+    const [isEmailOtpValid, isPhoneOtpValid] = await Promise.all([
+      bcrypt.compare(dto.emailOtp, request.emailOtpHash),
+      bcrypt.compare(dto.phoneOtp, request.phoneOtpHash),
+    ]);
+    if (!isEmailOtpValid || !isPhoneOtpValid) {
+      request.attempts += 1;
+      await request.save();
+      throw new BadRequestException('OTP email o cellulare non valido');
+    }
+
+    await this.usersService.assertUniqueIdentity(request.email, request.phone, request.taxCode);
+    const user = await this.usersService.create({
+      name: request.name,
+      email: request.email,
+      phone: request.phone,
+      taxCode: request.taxCode,
+      password: this.randomPasswordPlaceholder(),
+      role: UserRole.Cliente,
+      isActive: true,
+      interestedTags: request.interestedTags || [],
+    });
+    user.password = request.passwordHash;
+    await (user as User & { save?: () => Promise<User> }).save?.();
+    await this.clientOtpModel.deleteMany({ email: request.email }).exec();
+
+    return {
+      registered: true,
+      user,
+    };
   }
 
   async requestManagerRegistrationOtp(dto: RequestManagerRegistrationOtpDto) {
@@ -197,6 +324,19 @@ export class AuthService {
       phone: dto.phone.replace(/[\s./()-]/g, ''),
       taxCode: dto.taxCode.trim().toUpperCase(),
       password: dto.password,
+    };
+  }
+
+  private normalizeClientRegistration(dto: RequestClientRegistrationOtpDto): RequestClientRegistrationOtpDto {
+    return {
+      name: dto.name.trim(),
+      email: dto.email.trim().toLowerCase(),
+      phone: dto.phone.replace(/[\s./()-]/g, ''),
+      taxCode: dto.taxCode.trim().toUpperCase(),
+      password: dto.password,
+      interestedTags: Array.isArray(dto.interestedTags)
+        ? [...new Set(dto.interestedTags.map((tag) => String(tag || '').trim().toLowerCase()).filter(Boolean))]
+        : [],
     };
   }
 
