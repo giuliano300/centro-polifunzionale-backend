@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { UserRole } from 'src/roles/user-role.enum';
+import { User, UserDocument } from 'src/schemas/user.schema';
 import { WalletMovement, WalletMovementDocument } from 'src/schemas/wallet-movement.schema';
 import { NotificationsService } from './notifications.service';
 
@@ -8,6 +10,7 @@ import { NotificationsService } from './notifications.service';
 export class WalletService {
   constructor(
     @InjectModel(WalletMovement.name) private walletMovementModel: Model<WalletMovementDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private notificationsService: NotificationsService,
   ) {}
 
@@ -69,6 +72,43 @@ export class WalletService {
     });
   }
 
+  async creditManual(userId: string, amount: number, description?: string): Promise<WalletMovement> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Utente non valido');
+    }
+
+    const creditAmount = Number(amount || 0);
+    if (creditAmount <= 0) {
+      throw new BadRequestException('Il credito wallet deve essere maggiore di zero');
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('Utente non trovato');
+    }
+
+    if (user.role === UserRole.Admin) {
+      throw new BadRequestException('Il credito wallet non è disponibile per gli amministratori');
+    }
+
+    const movement = await this.walletMovementModel.create({
+      user: new Types.ObjectId(userId),
+      type: 'credit',
+      reason: 'manual',
+      amount: creditAmount,
+      currency: 'EUR',
+      description: description || 'Credito una tantum inserito dal backoffice',
+    });
+
+    await this.notifyWalletCredit(
+      userId,
+      creditAmount,
+      user.role === UserRole.Cliente ? 'cliente' : 'gestore',
+      'Credito wallet accreditato',
+    );
+    return movement;
+  }
+
   async debitBookingPayment(userId: string, bookingId: string, amount: number, description?: string): Promise<WalletMovement | null> {
     if (amount <= 0) {
       return null;
@@ -123,6 +163,35 @@ export class WalletService {
     });
   }
 
+  async creditCourseRefund(userId: string, courseBookingId: string, amount: number, description?: string): Promise<WalletMovement | null> {
+    if (amount <= 0) {
+      return null;
+    }
+
+    const existing = await this.walletMovementModel.findOne({
+      user: new Types.ObjectId(userId),
+      courseBooking: new Types.ObjectId(courseBookingId),
+      reason: 'course_refund',
+      type: 'credit',
+    }).exec();
+
+    if (existing) {
+      return existing;
+    }
+
+    const movement = await this.walletMovementModel.create({
+      user: new Types.ObjectId(userId),
+      courseBooking: new Types.ObjectId(courseBookingId),
+      type: 'credit',
+      reason: 'course_refund',
+      amount,
+      currency: 'EUR',
+      description,
+    });
+    await this.notifyWalletCredit(userId, amount, 'cliente');
+    return movement;
+  }
+
   async cancellationRefundAmountByBooking(bookingId: string): Promise<number> {
     if (!Types.ObjectId.isValid(bookingId)) {
       return 0;
@@ -165,12 +234,12 @@ export class WalletService {
     };
   }
 
-  private async notifyWalletCredit(userId: string, amount: number): Promise<void> {
+  private async notifyWalletCredit(userId: string, amount: number, audience: 'gestore' | 'cliente' = 'gestore', title?: string): Promise<void> {
     await this.notificationsService.create({
-      audience: 'gestore',
+      audience,
       userId,
-      title: 'Credito approvato',
-      message: `Il backoffice ha accreditato ${new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(amount)} nel tuo wallet.`,
+      title: title || (audience === 'cliente' ? 'Rimborso accreditato' : 'Credito approvato'),
+      message: `${new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(amount)} sono stati accreditati nel tuo wallet.`,
       type: 'wallet_credit_approved',
       link: '/wallet',
     });

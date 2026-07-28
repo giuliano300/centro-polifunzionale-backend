@@ -7,6 +7,7 @@ import { Booking, BookingSchema } from "src/schemas/booking.schema";
 import { Payment, PaymentSchema } from "src/schemas/payment.schema";
 import { CourseBooking, CourseBookingSchema } from "src/schemas/course-booking.schema";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { WalletModule } from "../wallet/wallet.module";
 
 
 @Module({
@@ -17,7 +18,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
       { name: Payment.name, schema: PaymentSchema },
       { name: CourseBooking.name, schema: CourseBookingSchema },
     ]),
-    NotificationsModule
+    NotificationsModule,
+    WalletModule
   ],
   controllers: [CoursesController],
   providers: [CourseService],

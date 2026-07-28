@@ -13,6 +13,7 @@ import { CourseBooking } from "src/schemas/course-booking.schema";
 import { NotificationsService } from "./notifications.service";
 import { COURSE_TAG_VALUES, CourseTag } from "src/courses/course-tag.enum";
 import { CourseApprovalStatus } from "src/courses/course-approval-status.enum";
+import { WalletService } from "./wallet.service";
 
 type SearchableCourse = CourseDocument & {
   booking?: {
@@ -42,6 +43,7 @@ export class CourseService {
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
     private notificationsService: NotificationsService,
+    private walletService: WalletService,
   ) {}
 
   async create(dto: CreateCourseDto, managerId?: string): Promise<Course> {
@@ -122,7 +124,7 @@ export class CourseService {
     }
 
     if (booking.status === 'cancellation_requested') {
-      throw new BadRequestException('Non puoi gestire un corso mentre la prenotazione e in richiesta di annullamento');
+      throw new BadRequestException("Non puoi gestire un corso mentre la prenotazione è in richiesta d'annullamento");
     }
 
     const today = new Date();
@@ -131,7 +133,7 @@ export class CourseService {
     bookingDate.setHours(0, 0, 0, 0);
 
     if (bookingDate < today) {
-      throw new BadRequestException('Il corso puo essere creato solo per prenotazioni di oggi o future');
+      throw new BadRequestException('Il corso può essere creato solo per prenotazioni di oggi o future');
     }
 
     const space = booking.space as unknown as { courseCreationAdvanceHours?: number };
@@ -141,7 +143,7 @@ export class CourseService {
     const now = new Date();
 
     if (now > creationDeadline) {
-      throw new BadRequestException(`Il corso puo essere creato solo fino a ${advanceHours} ore prima dell inizio della prenotazione`);
+      throw new BadRequestException(`Il corso può essere creato solo fino a ${advanceHours} ore prima dell'inizio della prenotazione`);
     }
 
     const duplicateQuery: FilterQuery<Course> = { booking: new Types.ObjectId(dto.booking) };
@@ -285,7 +287,7 @@ export class CourseService {
     }).exec();
 
     if (normalized.capacity < bookedSeats) {
-      throw new BadRequestException('La capienza non puo essere inferiore agli iscritti attuali');
+      throw new BadRequestException('La capienza non può essere inferiore agli iscritti attuali');
     }
 
     const updateData: any = {
@@ -307,6 +309,13 @@ export class CourseService {
     if (!updated) {
       throw new NotFoundException('Corso non trovato');
     }
+
+    await this.notifyCourseClients(
+      updated,
+      'Corso modificato',
+      `Il corso "${updated.title}" del ${this.formatNotificationDate(updated.date)} e stato modificato. Controlla i dettagli aggiornati.`,
+      'client_course_updated',
+    );
 
     if (managerId) {
       const booking = await this.bookingModel.findById(updated.booking).populate('user').populate('space').exec();
@@ -364,7 +373,17 @@ export class CourseService {
       throw new NotFoundException('Corso non trovato');
     }
 
-    await this.notifyCourseManager(updated, 'Corso chiuso', 'e stato chiuso dall amministrazione', 'course_closed');
+    await this.notifyCourseManager(updated, 'Corso chiuso', "è stato chiuso dall'amministrazione", 'course_closed');
+    await this.refundCourseBookingsToWallet(
+      updated,
+      'Rimborso automatico per chiusura corso',
+    );
+    await this.notifyCourseClients(
+      updated,
+      'Corso chiuso',
+      `Il corso "${updated.title}" del ${this.formatNotificationDate(updated.date)} è stato chiuso. L'eventuale importo pagato è stato accreditato nel wallet.`,
+      'client_course_closed',
+    );
     return updated;
   }
 
@@ -384,7 +403,13 @@ export class CourseService {
       throw new NotFoundException('Corso non trovato');
     }
 
-    await this.notifyCourseManager(updated, 'Corso disapprovato', 'non e stato approvato dall amministrazione', 'course_rejected');
+    await this.notifyCourseManager(updated, 'Corso disapprovato', "non è stato approvato dall'amministrazione", 'course_rejected');
+    await this.notifyCourseClients(
+      updated,
+      'Corso non approvato',
+      `Il corso "${updated.title}" del ${this.formatNotificationDate(updated.date)} non è più disponibile.`,
+      'client_course_rejected',
+    );
     return updated;
   }
 
@@ -416,6 +441,12 @@ export class CourseService {
       }, id, managerId);
     }
 
+    await this.notifyCourseClients(
+      course,
+      'Corso annullato',
+      `Il corso "${course.title}" del ${this.formatNotificationDate(course.date)} è stato annullato.`,
+      'client_course_cancelled',
+    );
     await this.courseModel.findByIdAndDelete(id).exec();
     await this.courseBookingModel.deleteMany({ course: id });
     return { deleted: true };
@@ -442,6 +473,50 @@ export class CourseService {
       type,
       link: `/courses?courseId=${(course as any)._id}`,
     });
+  }
+
+  private async notifyCourseClients(course: CourseDocument, title: string, message: string, type: string): Promise<void> {
+    const courseId = (course as unknown as { _id: Types.ObjectId })._id;
+    const bookings = await this.courseBookingModel.find({
+      course: courseId,
+      status: { $ne: 'cancelled' },
+    }).select('user').exec();
+    const userIds = [...new Set(bookings.map((booking) => booking.user?.toString()).filter(Boolean))];
+
+    await Promise.all(userIds.map((userId) => this.notificationsService.create({
+      audience: 'cliente',
+      userId,
+      title,
+      message,
+      type,
+      link: '/my-courses',
+    })));
+  }
+
+  private async refundCourseBookingsToWallet(course: CourseDocument, description: string): Promise<void> {
+    const courseId = (course as unknown as { _id: Types.ObjectId })._id;
+    const bookings = await this.courseBookingModel.find({
+      course: courseId,
+      status: { $ne: 'cancelled' },
+    }).exec();
+
+    await Promise.all(bookings.map(async (booking) => {
+      const amount = booking.paymentStatus === 'PAID'
+        ? Number(booking.totalAmount || booking.walletAmount + booking.externalAmount || booking.amount || 0)
+        : 0;
+      if (amount > 0) {
+        await this.walletService.creditCourseRefund(
+          booking.user.toString(),
+          (booking as unknown as { _id: Types.ObjectId })._id.toString(),
+          amount,
+          `${description}: ${course.title}`,
+        );
+      }
+      booking.status = 'cancelled';
+      await booking.save();
+    }));
+
+    await this.courseModel.findByIdAndUpdate(courseId, { $set: { participants: [] } }).exec();
   }
 
   private bookingStartDate(dateValue: string | Date, startTime: string): Date {

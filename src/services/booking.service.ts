@@ -563,15 +563,15 @@ export class BookingService {
     }
 
     if (booking.status === 'cancelled') {
-      throw new BadRequestException('La prenotazione e gia annullata');
+      throw new BadRequestException("La prenotazione è già annullata");
     }
 
     if (booking.status === 'cancellation_requested') {
-      throw new BadRequestException('La richiesta di annullamento e gia stata inviata');
+      throw new BadRequestException("La richiesta di annullamento è già stata inviata");
     }
 
     if (!this.isAfterToday(booking.date)) {
-      throw new BadRequestException('Puoi chiedere l annullamento solo per prenotazioni future, da domani in poi');
+      throw new BadRequestException("Puoi chiedere l'annullamento solo per prenotazioni future, da domani in poi");
     }
 
     booking.status = 'cancellation_requested';
@@ -582,7 +582,7 @@ export class BookingService {
     await this.notificationsService.create({
       audience: 'admin',
       title: 'Richiesta annullamento',
-      message: `${manager?.name || manager?.email || 'Gestore'} ha richiesto l annullamento di ${space?.name || 'uno spazio'} del ${this.formatNotificationDate(savedBooking.date)}.`,
+      message: `${manager?.name || manager?.email || 'Gestore'} ha richiesto l'annullamento di ${space?.name || 'uno spazio'} del ${this.formatNotificationDate(savedBooking.date)}.`,
       type: 'booking_cancellation_requested',
       link: '/cancellation-requests',
     });
@@ -605,11 +605,11 @@ export class BookingService {
     const creditAmount = Number(walletCreditAmount || 0);
 
     if (creditAmount < 0) {
-      throw new BadRequestException('Il credito wallet non puo essere negativo');
+      throw new BadRequestException('Il credito wallet non può essere negativo');
     }
 
     if (creditAmount > paidAmount) {
-      throw new BadRequestException('Il credito wallet non puo superare l importo pagato');
+      throw new BadRequestException("Il credito wallet non può superare l'importo pagato");
     }
 
     const bookingUser = booking.user as unknown as { _id?: { toString(): string }; toString(): string };
@@ -627,9 +627,38 @@ export class BookingService {
   }
 
   async remove(id: string): Promise<{ deleted: boolean }> {
-    const result = await this.bookingModel.findByIdAndDelete(id).exec();
-    if (!result) {
+    const booking = await this.bookingModel.findById(id).populate('user').populate('space').exec();
+    if (!booking) {
       throw new NotFoundException(`Booking #${id} not found`);
+    }
+
+    if (booking.status !== 'cancelled') {
+      const paidPayment = await this.paymentModel.findOne({ bookingId: booking._id, status: 'PAID' }).exec();
+      const paidAmount = Number(paidPayment?.totalAmount || paidPayment?.amount || 0);
+      const bookingUser = booking.user as unknown as { _id?: { toString(): string }; email?: string; name?: string; toString(): string };
+      const userId = bookingUser._id?.toString() || bookingUser.toString();
+      if (paidAmount > 0) {
+        await this.walletService.creditCancellationRefund(
+          userId,
+          (booking._id as Types.ObjectId).toString(),
+          paidAmount,
+          `Rimborso annullamento prenotazione ${booking.name || booking._id}`,
+        );
+      }
+
+      booking.status = 'cancelled';
+      await booking.save();
+      const space = booking.space as unknown as { name?: string } | undefined;
+      await this.notificationsService.create({
+        audience: 'gestore',
+        userId,
+        title: 'Prenotazione annullata',
+        message: paidAmount > 0
+          ? `La prenotazione ${space?.name || booking.name || 'spazio'} del ${this.formatNotificationDate(booking.date)} e stata annullata. Il rimborso e stato accreditato nel wallet.`
+          : `La prenotazione ${space?.name || booking.name || 'spazio'} del ${this.formatNotificationDate(booking.date)} e stata annullata.`,
+        type: 'booking_cancelled',
+        link: '/bookings',
+      });
     }
     return { deleted: true };
   }

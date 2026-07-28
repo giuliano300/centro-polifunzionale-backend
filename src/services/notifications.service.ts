@@ -6,7 +6,7 @@ import { Notification, NotificationDocument } from 'src/schemas/notification.sch
 import { UserRole } from 'src/roles/user-role.enum';
 
 export type CreateNotificationPayload = {
-  audience: 'admin' | 'gestore';
+  audience: 'admin' | 'gestore' | 'cliente';
   userId?: string;
   title: string;
   message: string;
@@ -45,9 +45,10 @@ export class NotificationsService {
   }
 
   async findForUser(userId: string, role: UserRole): Promise<Notification[]> {
+    await this.deleteOldReadNotifications();
     const query = role === UserRole.Admin
       ? { audience: 'admin' }
-      : { audience: 'gestore', user: new Types.ObjectId(userId) };
+      : { audience: role === UserRole.Cliente ? 'cliente' : 'gestore', user: new Types.ObjectId(userId) };
 
     return this.notificationModel.find(query).sort({ createdAt: -1 }).limit(30).exec();
   }
@@ -55,7 +56,7 @@ export class NotificationsService {
   async unreadCount(userId: string, role: UserRole): Promise<{ count: number }> {
     const query = role === UserRole.Admin
       ? { audience: 'admin', isRead: false }
-      : { audience: 'gestore', user: new Types.ObjectId(userId), isRead: false };
+      : { audience: role === UserRole.Cliente ? 'cliente' : 'gestore', user: new Types.ObjectId(userId), isRead: false };
 
     const count = await this.notificationModel.countDocuments(query).exec();
     return { count };
@@ -64,7 +65,7 @@ export class NotificationsService {
   async markRead(id: string, userId: string, role: UserRole): Promise<Notification | null> {
     const query = role === UserRole.Admin
       ? { _id: new Types.ObjectId(id), audience: 'admin' }
-      : { _id: new Types.ObjectId(id), audience: 'gestore', user: new Types.ObjectId(userId) };
+      : { _id: new Types.ObjectId(id), audience: role === UserRole.Cliente ? 'cliente' : 'gestore', user: new Types.ObjectId(userId) };
 
     return this.notificationModel.findOneAndUpdate(query, { isRead: true }, { new: true }).exec();
   }
@@ -72,9 +73,20 @@ export class NotificationsService {
   async markAllRead(userId: string, role: UserRole): Promise<{ updated: number }> {
     const query = role === UserRole.Admin
       ? { audience: 'admin', isRead: false }
-      : { audience: 'gestore', user: new Types.ObjectId(userId), isRead: false };
+      : { audience: role === UserRole.Cliente ? 'cliente' : 'gestore', user: new Types.ObjectId(userId), isRead: false };
 
     const result = await this.notificationModel.updateMany(query, { isRead: true }).exec();
+    await this.deleteOldReadNotifications();
     return { updated: result.modifiedCount || 0 };
+  }
+
+  async deleteOldReadNotifications(): Promise<{ deleted: number }> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const result = await this.notificationModel.deleteMany({
+      isRead: true,
+      createdAt: { $lt: today },
+    }).exec();
+    return { deleted: result.deletedCount || 0 };
   }
 }

@@ -50,7 +50,7 @@ export class CourseBookingsService {
     }
 
     if (spaceBooking?.status === 'cancellation_requested') {
-      throw new BadRequestException('Non puoi iscriverti mentre la prenotazione dello spazio e in richiesta di annullamento');
+      throw new BadRequestException("Non puoi iscriverti mentre la prenotazione dello spazio è in richiesta d'annullamento");
     }
 
     const existing = await this.courseBookingModel.findOne({
@@ -60,7 +60,7 @@ export class CourseBookingsService {
     }).exec();
 
     if (existing) {
-      throw new BadRequestException('Utente gia iscritto al corso');
+      throw new BadRequestException('Utente già iscritto al corso');
     }
 
     const bookedSeats = await this.courseBookingModel.countDocuments({
@@ -154,9 +154,19 @@ export class CourseBookingsService {
     const courseId = (course as unknown as { _id: Types.ObjectId })._id.toString();
     const courseDateLabel = this.formatNotificationDate(course.date);
     await this.notificationsService.create({
+      audience: 'cliente',
+      userId: targetUserId,
+      title: saved.paymentStatus === 'PENDING' ? 'Pagamento corso da completare' : 'Iscrizione corso confermata',
+      message: saved.paymentStatus === 'PENDING'
+        ? `La tua iscrizione a "${course.title}" per il ${courseDateLabel} è stata registrata. Completa il pagamento per confermare il posto.`
+        : `La tua iscrizione a "${course.title}" per il ${courseDateLabel} è confermata.`,
+      type: 'client_course_booking_created',
+      link: `/my-courses`,
+    });
+    await this.notificationsService.create({
       audience: 'admin',
       title: 'Nuova iscrizione corso',
-      message: `${subscriber?.name || subscriber?.email || 'Cliente'} si e iscritto a "${course.title}" di ${manager?.name || manager?.email || 'Gestore'} in ${space?.name || 'uno spazio'} per il ${courseDateLabel}.`,
+      message: `${subscriber?.name || subscriber?.email || 'Cliente'} si è iscritto a "${course.title}" di ${manager?.name || manager?.email || 'Gestore'} in ${space?.name || 'uno spazio'} per il ${courseDateLabel}.`,
       type: 'course_booking_created',
       link: `/course-bookings?courseId=${courseId}`,
     });
@@ -166,7 +176,7 @@ export class CourseBookingsService {
         audience: 'gestore',
         userId: managerId,
         title: 'Nuova iscrizione corso',
-        message: `${subscriber?.name || subscriber?.email || 'Cliente'} si e iscritto a "${course.title}" in ${space?.name || 'uno spazio'} per il ${courseDateLabel}.`,
+        message: `${subscriber?.name || subscriber?.email || 'Cliente'} si è iscritto a "${course.title}" in ${space?.name || 'uno spazio'} per il ${courseDateLabel}.`,
         type: 'course_booking_created',
         link: `/courses?courseId=${courseId}`,
       });
@@ -274,7 +284,7 @@ export class CourseBookingsService {
     }
 
     if (courseBooking.paymentStatus !== 'PENDING') {
-      throw new BadRequestException('Il metodo di pagamento puo essere modificato solo sui pagamenti da completare');
+      throw new BadRequestException('Il metodo di pagamento può essere modificato solo sui pagamenti da completare');
     }
 
     const populatedCourse = courseBooking.course as unknown as { booking?: { space?: { paymentMethods?: PaymentMethod[] } | string } };
@@ -288,7 +298,19 @@ export class CourseBookingsService {
         $addToSet: { participants: new Types.ObjectId(courseBooking.user.toString()) },
       }).exec();
     }
-    return courseBooking.save();
+    const saved = await courseBooking.save();
+    if (paymentMethod === PaymentMethod.Cash) {
+      const course = saved.course as unknown as { title?: string; date?: Date | string };
+      await this.notificationsService.create({
+        audience: 'cliente',
+        userId: saved.user.toString(),
+        title: 'Pagamento corso confermato',
+        message: `Il pagamento in contanti per "${course?.title || 'il corso'}" è stato registrato. Il posto è confermato.`,
+        type: 'client_course_payment_confirmed',
+        link: '/my-courses',
+      });
+    }
+    return saved;
   }
 
   private formatNotificationDate(value: string | Date): string {

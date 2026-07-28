@@ -113,8 +113,11 @@ export class UsersService {
 
     const filter: Record<string, unknown> = {};    
     if (email) filter.email = email;
-    if (role) filter.role = role;
-    if (excludeRole) filter.role = { $ne: excludeRole };
+    if (role) {
+      filter.role = role;
+    } else if (excludeRole) {
+      filter.role = { $ne: excludeRole };
+    }
     if (search) {
       const pattern = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       filter.$or = [

@@ -7,8 +7,8 @@ export class Notification extends Document {
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'User' })
   user?: User;
 
-  @Prop({ required: true, enum: ['admin', 'gestore'] })
-  audience: 'admin' | 'gestore';
+  @Prop({ required: true, enum: ['admin', 'gestore', 'cliente'] })
+  audience: 'admin' | 'gestore' | 'cliente';
 
   @Prop({ required: true })
   title: string;

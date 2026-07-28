@@ -11,8 +11,8 @@ export class WalletMovement extends Document {
   @Prop({ required: true, enum: ['credit', 'debit'] })
   type: 'credit' | 'debit';
 
-  @Prop({ required: true, enum: ['cancellation_refund', 'booking_payment', 'course_payment', 'signup_bonus', 'manual'] })
-  reason: 'cancellation_refund' | 'booking_payment' | 'course_payment' | 'signup_bonus' | 'manual';
+  @Prop({ required: true, enum: ['cancellation_refund', 'course_refund', 'booking_payment', 'course_payment', 'signup_bonus', 'manual'] })
+  reason: 'cancellation_refund' | 'course_refund' | 'booking_payment' | 'course_payment' | 'signup_bonus' | 'manual';
 
   @Prop({ required: true, min: 0 })
   amount: number;

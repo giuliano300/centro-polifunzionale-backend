@@ -17,7 +17,7 @@ type SocketUser = {
 
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:4300', 'http://localhost:4400'],
+    origin: ['http://localhost:4300', 'http://localhost:4400', 'http://localhost:4500'],
     credentials: true,
   },
 })

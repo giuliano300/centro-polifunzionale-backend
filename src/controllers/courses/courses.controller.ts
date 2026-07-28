@@ -34,6 +34,7 @@ export class CoursesController {
     @Query('end') end?: string,
     @Query('status') status?: string,
     @Query('search') search?: string,
+    @Query('scope') scope?: string,
     @Req() req?,
   ) {
     return this.courseService.findAll({
@@ -41,7 +42,7 @@ export class CoursesController {
       end,
       status,
       search,
-      managerId: req.user.role === UserRole.Gestore ? req.user.userId : undefined,
+      managerId: req.user.role === UserRole.Gestore && scope === 'manager' ? req.user.userId : undefined,
     });
   }
 
