@@ -157,6 +157,7 @@ export class UsersService {
     const token = randomBytes(32).toString('hex');
     const user = await this.userModel.create({
       ...normalized,
+      interestedTags: this.normalizeTags(dto.interestedTags),
       password: await bcrypt.hash(this.randomPasswordPlaceholder(), 10),
       role: dto.role === UserRole.Gestore ? UserRole.Gestore : UserRole.Cliente,
       isActive: false,
@@ -389,7 +390,12 @@ export class UsersService {
     this.validateTaxCode(normalizedDto.taxCode);
     this.validateItalianMobilePhone(normalizedDto.phone);
 
-    const updated = await this.userModel.findByIdAndUpdate(id, normalizedDto, {
+    const updatePayload = {
+      ...normalizedDto,
+      ...(dto.interestedTags !== undefined ? { interestedTags: this.normalizeTags(dto.interestedTags) } : {}),
+    };
+
+    const updated = await this.userModel.findByIdAndUpdate(id, updatePayload, {
       new: true,
       runValidators: true,
     }).exec();

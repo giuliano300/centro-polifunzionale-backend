@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 import { UserSchema } from '../schemas/user.schema';
 import { UserRole } from '../roles/user-role.enum';
 
-const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/centro-db';
-const email = process.env.ADMIN_EMAIL || 'admin@centro.local';
+const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/nagora-db';
+const email = process.env.ADMIN_EMAIL || 'admin@nagora.local';
 const password = process.env.ADMIN_PASSWORD || 'ChangeMe123!';
 const name = process.env.ADMIN_NAME || 'Amministratore';
 

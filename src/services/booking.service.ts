@@ -73,6 +73,8 @@ export class BookingService {
       rentalUnit: createBookingDto.rentalUnit || space.rentalUnit || 'whole_room',
       rentalMode: createBookingDto.rentalMode || 'time',
       workstationQuantity: createBookingDto.workstationQuantity || 1,
+      sectorQuantity: this.getSectorQuantity(space, createBookingDto),
+      sectorIndexes: this.getSectorIndexes(space, createBookingDto),
     });
     const savedBooking = await booking.save();
 
@@ -119,7 +121,7 @@ export class BookingService {
     return savedBooking;
   }
 
-  async availability(spaceId: string, date: string, rentalMode = 'time', workstationQuantity = 1) {
+  async availability(spaceId: string, date: string, rentalMode = 'time', workstationQuantity = 1, sectorQuantity = 0, sectorIndexes: number[] = []) {
     const space = await this.spaceModel.findById(spaceId).exec();
     if (!space) {
       throw new NotFoundException('Spazio non trovato');
@@ -157,6 +159,8 @@ export class BookingService {
         rentalMode: 'full_day' as const,
         rentalUnit: space.rentalUnit || 'whole_room',
         workstationQuantity,
+        sectorQuantity,
+        sectorIndexes,
       };
       const available = this.isStartBookableToday(space, dto, open, normalizedClose)
         && await this.isAvailableForDto(space, dto);
@@ -188,6 +192,8 @@ export class BookingService {
         rentalMode: 'time' as const,
         rentalUnit: space.rentalUnit || 'whole_room',
         workstationQuantity,
+        sectorQuantity,
+        sectorIndexes,
       };
       if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
         continue;
@@ -241,6 +247,13 @@ export class BookingService {
 
     if (rentalUnit === 'workstation' && (dto.workstationQuantity || 1) > (space.workstationCount || 1)) {
       throw new BadRequestException('Postazioni richieste superiori alle postazioni disponibili');
+    }
+
+    if (rentalUnit === 'whole_room') {
+      const sectorQuantity = this.getSectorQuantity(space, dto);
+      if (sectorQuantity > this.getSectorCapacity(space)) {
+        throw new BadRequestException('Aree richiesti superiori ai aree disponibili');
+      }
     }
 
     const slot = this.getOpeningSlot(space, dto.date);
@@ -322,6 +335,9 @@ export class BookingService {
     const requested = this.getNormalizedInterval(space, dto);
     const rentalUnit = dto.rentalUnit || space.rentalUnit || 'whole_room';
     const workstationQuantity = dto.workstationQuantity || 1;
+    const requestedSectorIndexes = this.getSectorIndexes(space, dto);
+    const requestedSectorQuantity = requestedSectorIndexes.length || this.getSectorQuantity(space, dto);
+    const sectorCapacity = this.getSectorCapacity(space);
 
     const sameDayBookings = await this.bookingModel.find({
       space: new mongoose.Types.ObjectId(dto.spaceId),
@@ -342,7 +358,29 @@ export class BookingService {
       return;
     }
 
-    if (rentalUnit === 'whole_room' || overlapping.some((booking) => booking.rentalUnit === 'whole_room')) {
+    if (rentalUnit === 'whole_room') {
+      if (space.sectorEnabled && requestedSectorIndexes.length) {
+        const requestedAll = requestedSectorIndexes.length >= sectorCapacity;
+        const conflict = overlapping.some((booking) => {
+          const bookedIndexes = this.getBookedSectorIndexes(space, booking);
+          return requestedAll
+            || bookedIndexes.length >= sectorCapacity
+            || requestedSectorIndexes.some((index) => bookedIndexes.includes(index));
+        });
+        if (conflict) {
+          throw new BadRequestException('Aree non disponibili in questa fascia oraria');
+        }
+        return;
+      }
+
+      const usedSectors = overlapping.reduce((total, booking) => total + this.getBookedSectorQuantity(space, booking), 0);
+      if (usedSectors + requestedSectorQuantity > sectorCapacity) {
+        throw new BadRequestException('Aree non disponibili in questa fascia oraria');
+      }
+      return;
+    }
+
+    if (overlapping.some((booking) => booking.rentalUnit === 'whole_room')) {
       throw new BadRequestException('Lo spazio e gia prenotato in questa fascia oraria');
     }
 
@@ -426,14 +464,92 @@ export class BookingService {
 
   private calculateAmount(space: SpaceDocument, dto: CreateBookingDto): number {
     if ((dto.rentalMode || 'time') === 'full_day') {
+      if ((dto.rentalUnit || space.rentalUnit) === 'whole_room') {
+        const sectorQuantity = this.getSectorQuantity(space, dto);
+        const sectorCapacity = this.getSectorCapacity(space);
+        if (space.sectorEnabled && sectorQuantity < sectorCapacity) {
+          return (space.sectorDailyRate || space.dailyRate || 0) * sectorQuantity;
+        }
+      }
       return space.dailyRate || 0;
     }
 
     const { start, end } = this.getNormalizedInterval(space, dto);
     const fraction = space.timeSlotMinutes || 60;
     const units = Math.ceil((end - start) / fraction);
-    const quantity = (dto.rentalUnit || space.rentalUnit) === 'workstation' ? (dto.workstationQuantity || 1) : 1;
-    return units * (space.hourlyRate || 0) * quantity;
+    if ((dto.rentalUnit || space.rentalUnit) === 'workstation') {
+      return units * (space.hourlyRate || 0) * (dto.workstationQuantity || 1);
+    }
+
+    const sectorQuantity = this.getSectorQuantity(space, dto);
+    const sectorCapacity = this.getSectorCapacity(space);
+    if (space.sectorEnabled && sectorQuantity < sectorCapacity) {
+      return units * (space.sectorRate || space.hourlyRate || 0) * sectorQuantity;
+    }
+
+    return units * (space.hourlyRate || 0);
+  }
+
+  private getSectorCapacity(space: SpaceDocument): number {
+    return space.rentalUnit === 'whole_room' && space.sectorEnabled
+      ? Math.max(Number(space.sectorCount || 1), 1)
+      : 1;
+  }
+
+  private getSectorQuantity(space: SpaceDocument, dto: Pick<CreateBookingDto, 'sectorQuantity'>): number {
+    if (space.rentalUnit !== 'whole_room' || !space.sectorEnabled) {
+      return 1;
+    }
+
+    return Math.max(Number(dto.sectorQuantity || space.sectorCount || 1), 1);
+  }
+
+  private getSectorIndexes(space: SpaceDocument, dto: Pick<CreateBookingDto, 'sectorIndexes' | 'sectorQuantity'>): number[] {
+    const capacity = this.getSectorCapacity(space);
+    if (space.rentalUnit !== 'whole_room' || !space.sectorEnabled || capacity <= 1) {
+      return [];
+    }
+
+    const raw = Array.isArray(dto.sectorIndexes) ? dto.sectorIndexes : [];
+    const indexes = [...new Set(raw.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value < capacity))];
+    if (indexes.length) {
+      return indexes.sort((a, b) => a - b);
+    }
+
+    const quantity = Math.min(this.getSectorQuantity(space, dto), capacity);
+    return Array.from({ length: quantity }, (_, index) => index);
+  }
+
+  private getBookedSectorQuantity(space: SpaceDocument, booking: Pick<BookingDocument, 'rentalUnit' | 'sectorQuantity' | 'sectorIndexes'>): number {
+    if (booking.rentalUnit !== 'whole_room') {
+      return 0;
+    }
+
+    if (!space.sectorEnabled) {
+      return 1;
+    }
+
+    return this.getBookedSectorIndexes(space, booking).length || Math.max(Number(booking.sectorQuantity || space.sectorCount || 1), 1);
+  }
+
+  private getBookedSectorIndexes(space: SpaceDocument, booking: Pick<BookingDocument, 'rentalUnit' | 'sectorQuantity' | 'sectorIndexes'>): number[] {
+    const capacity = this.getSectorCapacity(space);
+    if (booking.rentalUnit !== 'whole_room') {
+      return [];
+    }
+
+    if (!space.sectorEnabled) {
+      return [0];
+    }
+
+    const raw = Array.isArray(booking.sectorIndexes) ? booking.sectorIndexes : [];
+    const indexes = [...new Set(raw.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value < capacity))];
+    if (indexes.length) {
+      return indexes.sort((a, b) => a - b);
+    }
+
+    const quantity = Math.min(Math.max(Number(booking.sectorQuantity || space.sectorCount || 1), 1), capacity);
+    return Array.from({ length: quantity }, (_, index) => index);
   }
 
   private defaultOpeningHours() {
@@ -471,7 +587,7 @@ export class BookingService {
     if (start || end) {
       query.date = {};
       if (start) query.date.$gte = new Date(start);
-      if (end) query.date.$lte = new Date(end);
+      if (end) query.date.$lt = new Date(end);
     }
 
     if (status) {

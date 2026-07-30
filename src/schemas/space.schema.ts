@@ -50,6 +50,27 @@ export class Space {
   @Prop({ default: 1, min: 1 })
   workstationCount: number;
 
+  @Prop({ default: false })
+  sectorEnabled: boolean;
+
+  @Prop({ default: 1, min: 1 })
+  sectorCount: number;
+
+  @Prop({ type: [String], default: [] })
+  sectorNames: string[];
+
+  @Prop({ default: '#dbeafe' })
+  calendarColor: string;
+
+  @Prop({ type: [String], default: [] })
+  sectorColors: string[];
+
+  @Prop({ default: 0, min: 0 })
+  sectorRate: number;
+
+  @Prop({ default: 0, min: 0 })
+  sectorDailyRate: number;
+
   @Prop({ default: 2, min: 0 })
   courseCreationAdvanceHours: number;
 

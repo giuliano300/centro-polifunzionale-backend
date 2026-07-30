@@ -19,6 +19,11 @@ export class InviteClientDto {
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole.Cliente | UserRole.Gestore;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interestedTags?: string[];
 }
 
 export class CompleteClientInviteDto {

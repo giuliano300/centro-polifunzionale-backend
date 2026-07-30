@@ -32,6 +32,12 @@ export class Booking extends Document {
   @Prop({ default: 1, min: 1 })
   workstationQuantity: number;
 
+  @Prop({ default: 0, min: 0 })
+  sectorQuantity: number;
+
+  @Prop({ type: [Number], default: [] })
+  sectorIndexes: number[];
+
   @Prop({ default: 'pending', enum: ['pending', 'confirmed', 'cancellation_requested', 'cancelled'] })
   status: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled';
 

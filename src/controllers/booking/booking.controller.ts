@@ -42,8 +42,13 @@ export class BookingsController {
     @Query('date') date: string,
     @Query('rentalMode') rentalMode?: string,
     @Query('workstationQuantity') workstationQuantity?: string,
+    @Query('sectorQuantity') sectorQuantity?: string,
+    @Query('sectorIndexes') sectorIndexes?: string,
   ) {
-    return this.bookingsService.availability(spaceId, date, rentalMode || 'time', Number(workstationQuantity || 1));
+    const parsedSectorIndexes = sectorIndexes
+      ? sectorIndexes.split(',').map((value) => Number(value)).filter((value) => Number.isInteger(value))
+      : [];
+    return this.bookingsService.availability(spaceId, date, rentalMode || 'time', Number(workstationQuantity || 1), Number(sectorQuantity || 0), parsedSectorIndexes);
   }
 
   @Get(':id')

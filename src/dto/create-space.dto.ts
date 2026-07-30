@@ -94,6 +94,46 @@ export class CreateSpaceDto {
   @Min(1)
   workstationCount?: number;
 
+  @ApiProperty({ example: true, description: 'Permette di vendere la stanza non coworking per aree', required: false })
+  @IsOptional()
+  @IsBoolean()
+  sectorEnabled?: boolean;
+
+  @ApiProperty({ example: 2, description: 'Numero aree acquistabili della stanza', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sectorCount?: number;
+
+  @ApiProperty({ example: 60, description: 'Prezzo per area e frazione oraria', required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sectorRate?: number;
+
+  @ApiProperty({ example: 180, description: 'Prezzo giornata per area', required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sectorDailyRate?: number;
+
+  @ApiProperty({ example: ['Lato finestra', 'Lato ingresso'], description: 'Nomi dei aree della stanza', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sectorNames?: string[];
+
+  @ApiProperty({ example: '#dbeafe', description: 'Colore calendario della stanza', required: false })
+  @IsOptional()
+  @IsString()
+  calendarColor?: string;
+
+  @ApiProperty({ example: ['#dbeafe', '#dcfce7'], description: 'Colori calendario dei aree', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sectorColors?: string[];
+
   @ApiProperty({ example: 2, description: 'Ore prima dell inizio prenotazione oltre cui non e piu possibile creare un corso', required: false })
   @IsOptional()
   @IsNumber()

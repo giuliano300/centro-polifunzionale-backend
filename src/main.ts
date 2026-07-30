@@ -15,8 +15,8 @@ async function bootstrap() {
   });
 
   const config = new DocumentBuilder()
-    .setTitle('Centro Polifunzionale API')
-    .setDescription('API per la gestione del centro polifunzionale')
+    .setTitle("N'Agorà API")
+    .setDescription("API per la gestione di N'Agorà")
     .setVersion('1.0')
     .addBearerAuth(
     {

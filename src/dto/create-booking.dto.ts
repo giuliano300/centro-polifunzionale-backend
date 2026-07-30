@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsIn, IsInt, IsMongoId, IsOptional, IsString, Min } from "class-validator";
+import { IsArray, IsIn, IsInt, IsMongoId, IsOptional, IsString, Min } from "class-validator";
 
 export class CreateBookingDto {
   @ApiProperty({ description: 'Id dello spazio' })
@@ -42,6 +42,19 @@ export class CreateBookingDto {
   @IsInt()
   @Min(1)
   workstationQuantity?: number;
+
+  @ApiProperty({ example: 1, description: 'Numero aree richieste per stanze divisibili', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sectorQuantity?: number;
+
+  @ApiProperty({ example: [0, 1], description: 'Indici dei aree richiesti per stanze divisibili', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  sectorIndexes?: number[];
 
   @ApiProperty({ example: 'WELCOME10', description: 'Codice sconto', required: false })
   @IsOptional()

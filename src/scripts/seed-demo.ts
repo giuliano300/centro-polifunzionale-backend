@@ -15,7 +15,7 @@ import { CourseTag } from '../courses/course-tag.enum';
 import { PaymentMethod } from '../payments/payment-method.enum';
 import { UserRole } from '../roles/user-role.enum';
 
-const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/centro-db';
+const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/nagora-db';
 const demoPassword = process.env.DEMO_PASSWORD || 'Demo123!';
 
 const UserModel = mongoose.model('User', UserSchema);

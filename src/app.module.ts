@@ -15,13 +15,14 @@ import { WalletModule } from './controllers/wallet/wallet.module';
 import { NotificationsModule } from './controllers/notifications/notifications.module';
 import { SystemSettingsModule } from './controllers/system-settings/system-settings.module';
 import { DiscountCodesModule } from './controllers/discount-codes/discount-codes.module';
+import { CourseTagsModule } from './controllers/course-tags/course-tags.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGODB_URI', 'mongodb://localhost:27017/centro-db'),
+        uri: configService.get<string>('MONGODB_URI', 'mongodb://localhost:27017/nagora-db'),
       }),
     }),
     SpacesModule,
@@ -35,7 +36,8 @@ import { DiscountCodesModule } from './controllers/discount-codes/discount-codes
     WalletModule,
     NotificationsModule,
     SystemSettingsModule,
-    DiscountCodesModule
+    DiscountCodesModule,
+    CourseTagsModule
   ],
   controllers: [AppController],
     providers: [AppService],

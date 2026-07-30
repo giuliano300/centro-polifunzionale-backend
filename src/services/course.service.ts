@@ -11,7 +11,6 @@ import { Booking, BookingDocument } from "src/schemas/booking.schema";
 import { Payment, PaymentDocument } from "src/schemas/payment.schema";
 import { CourseBooking } from "src/schemas/course-booking.schema";
 import { NotificationsService } from "./notifications.service";
-import { COURSE_TAG_VALUES, CourseTag } from "src/courses/course-tag.enum";
 import { CourseApprovalStatus } from "src/courses/course-approval-status.enum";
 import { WalletService } from "./wallet.service";
 
@@ -526,18 +525,17 @@ export class CourseService {
     return date;
   }
 
-  private normalizeTags(tags?: string[]): CourseTag[] {
+  private normalizeTags(tags?: string[]): string[] {
     if (!Array.isArray(tags)) {
       return [];
     }
 
-    const allowedTags = new Set<string>(COURSE_TAG_VALUES);
     return [...new Set(
       tags
         .map((tag) => String(tag || '').trim().toLowerCase())
-        .filter((tag) => allowedTags.has(tag))
+        .filter(Boolean)
         .slice(0, 20),
-    )] as CourseTag[];
+    )];
   }
 
   private normalizeImageCrop(crop?: { x?: number; y?: number; scale?: number }): { x: number; y: number; scale: number } {

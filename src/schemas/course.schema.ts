@@ -1,7 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
 import { Booking } from './booking.schema';
-import { COURSE_TAG_VALUES, CourseTag } from 'src/courses/course-tag.enum';
 import { COURSE_APPROVAL_STATUS_VALUES, CourseApprovalStatus } from 'src/courses/course-approval-status.enum';
 
 // course.schema.ts
@@ -13,8 +12,8 @@ export class Course {
   @Prop()
   description: string;
 
-  @Prop({ type: [String], enum: COURSE_TAG_VALUES, default: [] })
-  tags: CourseTag[];
+  @Prop({ type: [String], default: [] })
+  tags: string[];
 
   @Prop()
   imageUrl?: string;

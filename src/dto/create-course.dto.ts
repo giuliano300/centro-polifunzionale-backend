@@ -1,7 +1,6 @@
 import { Type } from "class-transformer";
 import { IsArray, IsBoolean, IsDateString, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
 import { CourseApprovalStatus } from "src/courses/course-approval-status.enum";
-import { CourseTag } from "src/courses/course-tag.enum";
 
 export class CourseImageCropDto {
   @IsNumber()
@@ -25,8 +24,8 @@ export class CreateCourseDto {
 
   @IsOptional()
   @IsArray()
-  @IsEnum(CourseTag, { each: true })
-  tags?: CourseTag[];
+  @IsString({ each: true })
+  tags?: string[];
 
   @IsOptional()
   @IsString()
