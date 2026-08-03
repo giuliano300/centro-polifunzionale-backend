@@ -404,7 +404,7 @@ export class UsersService {
       throw new NotFoundException('Utente non trovato');
     }
 
-    if (current.role === UserRole.Gestore && current.isActive !== false && normalizedDto.isActive === false) {
+    if (current.role !== UserRole.Admin && current.isActive !== false && normalizedDto.isActive === false) {
       this.notificationsService.emitAccountDisabled(id);
     }
 

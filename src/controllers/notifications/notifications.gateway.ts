@@ -17,7 +17,14 @@ type SocketUser = {
 
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:4300', 'http://localhost:4400', 'http://localhost:4500'],
+    origin: [
+      'http://localhost:4300',
+      'http://localhost:4400',
+      'http://localhost:4500',
+      'https://backofficenagora.ewtlab.it',
+      'https://gestorenagora.ewtlab.it',
+      'https://nagora.ewtlab.it',
+    ],
     credentials: true,
   },
 })
@@ -35,9 +42,7 @@ export class NotificationsGateway implements OnGatewayConnection {
     }
 
     try {
-      const payload = this.jwtService.verify<SocketUser>(token, {
-        secret: process.env.JWT_SECRET || 'a-string-secret-at-least-256-bits-long',
-      });
+      const payload = this.jwtService.verify<SocketUser>(token);
       const userId = payload.sub || payload.userId;
       if (!userId || !payload.role) {
         client.disconnect();
@@ -57,6 +62,10 @@ export class NotificationsGateway implements OnGatewayConnection {
 
   emitToUser(userId: string, notification: unknown): void {
     this.server?.to(`user:${userId}`).emit('notification', notification);
+  }
+
+  emitChatMessage(userIds: string[], message: unknown): void {
+    userIds.forEach((userId) => this.server?.to(`user:${userId}`).emit('course-chat-message', message));
   }
 
   emitAccountDisabled(userId: string): void {

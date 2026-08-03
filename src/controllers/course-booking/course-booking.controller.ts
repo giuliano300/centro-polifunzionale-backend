@@ -27,7 +27,8 @@ export class CourseBookingsController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
   async findAll(@Query() filterDto: FilterCourseBookingDto, @Req() req) {
-    const targetFilter = req.user.role === UserRole.Cliente
+    const scope = filterDto.scope;
+    const targetFilter = scope === 'mine' || req.user.role === UserRole.Cliente
       ? { ...filterDto, userId: req.user.userId }
       : req.user.role === UserRole.Gestore
         ? { ...filterDto, managerId: req.user.userId }

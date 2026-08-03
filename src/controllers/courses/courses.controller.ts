@@ -35,6 +35,7 @@ export class CoursesController {
     @Query('status') status?: string,
     @Query('search') search?: string,
     @Query('scope') scope?: string,
+    @Query('managerId') managerId?: string,
     @Req() req?,
   ) {
     return this.courseService.findAll({
@@ -42,7 +43,9 @@ export class CoursesController {
       end,
       status,
       search,
-      managerId: req.user.role === UserRole.Gestore && scope === 'manager' ? req.user.userId : undefined,
+      managerId: req.user.role === UserRole.Gestore && scope === 'manager'
+        ? req.user.userId
+        : req.user.role === UserRole.Admin ? managerId : undefined,
     });
   }
 

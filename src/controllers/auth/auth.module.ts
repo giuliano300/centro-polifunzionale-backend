@@ -9,6 +9,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ManagerRegistrationOtp, ManagerRegistrationOtpSchema } from 'src/schemas/manager-registration-otp.schema';
 import { ManagerPasswordReset, ManagerPasswordResetSchema } from 'src/schemas/manager-password-reset.schema';
 import { ClientRegistrationOtp, ClientRegistrationOtpSchema } from 'src/schemas/client-registration-otp.schema';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
@@ -19,9 +20,13 @@ import { ClientRegistrationOtp, ClientRegistrationOtpSchema } from 'src/schemas/
       { name: ClientRegistrationOtp.name, schema: ClientRegistrationOtpSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'a-string-secret-at-least-256-bits-long',
-      signOptions: { expiresIn: '1d' },
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET') || 'a-string-secret-at-least-256-bits-long',
+        signOptions: { expiresIn: '1d' },
+      }),
     }),
   ],
   providers: [AuthService, JwtStrategy],

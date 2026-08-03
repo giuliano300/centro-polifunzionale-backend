@@ -16,6 +16,7 @@ import { NotificationsModule } from './controllers/notifications/notifications.m
 import { SystemSettingsModule } from './controllers/system-settings/system-settings.module';
 import { DiscountCodesModule } from './controllers/discount-codes/discount-codes.module';
 import { CourseTagsModule } from './controllers/course-tags/course-tags.module';
+import { CourseChatModule } from './controllers/course-chat/course-chat.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -40,7 +41,8 @@ import { CourseTagsModule } from './controllers/course-tags/course-tags.module';
     NotificationsModule,
     SystemSettingsModule,
     DiscountCodesModule,
-    CourseTagsModule
+    CourseTagsModule,
+    CourseChatModule
   ],
   controllers: [AppController],
     providers: [AppService],
