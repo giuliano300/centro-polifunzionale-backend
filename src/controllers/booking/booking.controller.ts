@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Headers, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { CreateBookingDto } from "../../dto/create-booking.dto";
 import { UpdateBookingDto } from "../../dto/update-booking.dto";
 import { Roles, UserRole } from "../../roles/roles.decorator";
@@ -16,12 +16,12 @@ export class BookingsController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
-  async create(@Body() dto: CreateBookingDto, @Req() req) {
+  async create(@Body() dto: CreateBookingDto, @Req() req, @Headers('idempotency-key') idempotencyKey?: string) {
     const targetDto = {
       ...dto,
       userId: req.user.role === UserRole.Cliente ? req.user.userId : dto.userId,
     };
-    return this.bookingsService.create(targetDto, req.user.userId);
+    return this.bookingsService.create(targetDto, req.user.userId, idempotencyKey);
   }
 
   @Get()

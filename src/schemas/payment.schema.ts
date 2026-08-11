@@ -48,3 +48,4 @@ export class Payment extends Document {
 
 export type PaymentDocument = Payment & Document;
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
+PaymentSchema.index({ transactionId: 1 }, { unique: true, sparse: true });

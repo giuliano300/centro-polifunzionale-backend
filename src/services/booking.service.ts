@@ -12,6 +12,7 @@ import { User, UserDocument } from 'src/schemas/user.schema';
 import { WalletService } from './wallet.service';
 import { NotificationsService } from './notifications.service';
 import { DiscountCodeService } from './discount-code.service';
+import { SystemSettingsService } from './system-settings.service';
 
 type SearchableBooking = BookingDocument & {
   user?: {
@@ -42,9 +43,29 @@ export class BookingService {
     private walletService: WalletService,
     private notificationsService: NotificationsService,
     private discountCodeService: DiscountCodeService,
+    private systemSettingsService: SystemSettingsService,
   ) {}
 
-  async create(createBookingDto: CreateBookingDto, userId: string): Promise<Booking> {
+  async create(createBookingDto: CreateBookingDto, userId: string, idempotencyKey?: string): Promise<Booking> {
+    const targetUserId = createBookingDto.userId || userId;
+    await this.expirePendingBookings();
+    const normalizedKey = idempotencyKey?.trim().slice(0, 200);
+    if (normalizedKey) {
+      const replay = await this.bookingModel.findOne({ user: new Types.ObjectId(targetUserId), idempotencyKey: normalizedKey }).exec();
+      if (replay) return replay;
+    }
+
+    const semanticReplay = await this.bookingModel.findOne({
+      user: new Types.ObjectId(targetUserId),
+      space: new Types.ObjectId(createBookingDto.spaceId),
+      date: new Date(createBookingDto.date),
+      startTime: createBookingDto.startTime,
+      endTime: createBookingDto.endTime,
+      status: { $in: ['pending', 'confirmed'] },
+      $or: [{ status: 'confirmed' }, { holdExpiresAt: { $gt: new Date() } }],
+    }).exec();
+    if (semanticReplay) return semanticReplay;
+
     const space = await this.spaceModel.findById(createBookingDto.spaceId).exec();
     if (!space) {
       throw new NotFoundException('Spazio non trovato');
@@ -52,7 +73,6 @@ export class BookingService {
 
     this.validateSpaceAvailability(space, createBookingDto);
     await this.validateBookingConflicts(space, createBookingDto);
-    const targetUserId = createBookingDto.userId || userId;
     const user = await this.userModel.findById(targetUserId).exec();
     const monthlyPurchaseCount = await this.monthlyBookingPurchaseCount(targetUserId, createBookingDto.date);
     const originalAmount = this.calculateAmount(space, createBookingDto);
@@ -66,6 +86,7 @@ export class BookingService {
     );
     const amount = Math.max(originalAmount - discount.amount, 0);
 
+    const holdMinutes = await this.systemSettingsService.bookingHoldMinutes();
     const booking = new this.bookingModel({
       ...createBookingDto,
       user: new mongoose.Types.ObjectId(targetUserId),
@@ -75,6 +96,8 @@ export class BookingService {
       workstationQuantity: createBookingDto.workstationQuantity || 1,
       sectorQuantity: this.getSectorQuantity(space, createBookingDto),
       sectorIndexes: this.getSectorIndexes(space, createBookingDto),
+      holdExpiresAt: new Date(Date.now() + holdMinutes * 60_000),
+      idempotencyKey: normalizedKey,
     });
     const savedBooking = await booking.save();
 
@@ -107,6 +130,7 @@ export class BookingService {
     });
     if (externalAmount <= 0) {
       savedBooking.status = 'confirmed';
+      savedBooking.holdExpiresAt = undefined;
       await savedBooking.save();
     }
     await this.discountCodeService.markUsed(discount.code);
@@ -122,6 +146,7 @@ export class BookingService {
   }
 
   async availability(spaceId: string, date: string, rentalMode = 'time', workstationQuantity = 1, sectorQuantity = 0, sectorIndexes: number[] = []) {
+    await this.expirePendingBookings();
     const space = await this.spaceModel.findById(spaceId).exec();
     if (!space) {
       throw new NotFoundException('Spazio non trovato');
@@ -342,7 +367,10 @@ export class BookingService {
     const sameDayBookings = await this.bookingModel.find({
       space: new mongoose.Types.ObjectId(dto.spaceId),
       date: new Date(dto.date),
-      status: { $ne: 'cancelled' },
+      $or: [
+        { status: { $in: ['confirmed', 'cancellation_requested'] } },
+        { status: 'pending', holdExpiresAt: { $gt: new Date() } },
+      ],
     }).exec();
 
     const overlapping = sameDayBookings.filter((booking) => {
@@ -387,6 +415,32 @@ export class BookingService {
     const usedWorkstations = overlapping.reduce((total, booking) => total + (booking.workstationQuantity || 1), 0);
     if (usedWorkstations + workstationQuantity > (space.workstationCount || 1)) {
       throw new BadRequestException('Postazioni non disponibili in questa fascia oraria');
+    }
+  }
+
+  private async expirePendingBookings(): Promise<void> {
+    const expired = await this.bookingModel.find({
+      status: 'pending',
+      holdExpiresAt: { $lte: new Date() },
+    }).exec();
+
+    for (const booking of expired) {
+      const bookingId = (booking._id as Types.ObjectId).toString();
+      const payment = await this.paymentModel.findOne({ bookingId: booking._id, status: 'PENDING' }).exec();
+      const updated = await this.bookingModel.findOneAndUpdate(
+        { _id: booking._id, status: 'pending' },
+        { $set: { status: 'expired' } },
+        { new: true },
+      ).exec();
+      if (!updated) continue;
+      if ((payment?.walletAmount || 0) > 0) {
+        await this.walletService.releaseBookingHold(booking.user.toString(), bookingId, payment!.walletAmount);
+      }
+      await this.discountCodeService.releaseUsed(payment?.discountCode);
+      await this.paymentModel.updateMany(
+        { bookingId: booking._id, status: 'PENDING' },
+        { $set: { status: 'FAILED', method: 'hold_expired' } },
+      ).exec();
     }
   }
 
@@ -576,6 +630,7 @@ export class BookingService {
   }
 
   async findAll(filterDto: FilterBookingsDto): Promise<BookingWithPayments[] | PaginatedBookings> {
+    await this.expirePendingBookings();
     const { spaceId, userId, date, status, excludeStatus, start, end, search, page, limit } = filterDto;
 
     const query: FilterQuery<Booking> = {};

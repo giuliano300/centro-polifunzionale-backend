@@ -7,6 +7,7 @@ import { ConfirmManagerRegistrationOtpDto, RequestManagerRegistrationOtpDto } fr
 import { ConfirmManagerPasswordResetDto, RequestManagerPasswordResetDto } from 'src/dto/manager-password-reset.dto';
 import { CompleteClientInviteDto, RequestClientInvitePhoneOtpDto } from 'src/dto/client-invite.dto';
 import { ConfirmClientRegistrationOtpDto, RequestClientRegistrationOtpDto } from 'src/dto/client-registration.dto';
+import { CompleteSocialRegistrationDto, RequestSocialPhoneOtpDto, SocialSignInDto } from 'src/dto/social-auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -27,6 +28,21 @@ export class AuthController {
       throw new UnauthorizedException('Invalid credentials');
     }
     return this.authService.login(user);
+  }
+
+  @Post('social/sign-in')
+  async socialSignIn(@Body() dto: SocialSignInDto) {
+    return this.authService.socialSignIn(dto);
+  }
+
+  @Post('social/request-phone-otp')
+  async requestSocialPhoneOtp(@Body() dto: RequestSocialPhoneOtpDto) {
+    return this.authService.requestSocialPhoneOtp(dto);
+  }
+
+  @Post('social/complete-registration')
+  async completeSocialRegistration(@Body() dto: CompleteSocialRegistrationDto) {
+    return this.authService.completeSocialRegistration(dto);
   }
 
   @Post('manager/reset-password')

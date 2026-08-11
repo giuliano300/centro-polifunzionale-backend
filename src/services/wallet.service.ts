@@ -163,6 +163,28 @@ export class WalletService {
     });
   }
 
+  async releaseBookingHold(userId: string, bookingId: string, amount: number): Promise<WalletMovement | null> {
+    if (amount <= 0) return null;
+    const query = {
+      user: new Types.ObjectId(userId), booking: new Types.ObjectId(bookingId),
+      reason: 'booking_hold_release', type: 'credit',
+    };
+    const existing = await this.walletMovementModel.findOne(query).exec();
+    if (existing) return existing;
+    return this.walletMovementModel.create({ ...query, amount, currency: 'EUR', description: 'Rilascio prenotazione scaduta' });
+  }
+
+  async releaseCourseHold(userId: string, courseBookingId: string, amount: number): Promise<WalletMovement | null> {
+    if (amount <= 0) return null;
+    const query = {
+      user: new Types.ObjectId(userId), courseBooking: new Types.ObjectId(courseBookingId),
+      reason: 'course_hold_release', type: 'credit',
+    };
+    const existing = await this.walletMovementModel.findOne(query).exec();
+    if (existing) return existing;
+    return this.walletMovementModel.create({ ...query, amount, currency: 'EUR', description: 'Rilascio iscrizione scaduta' });
+  }
+
   async creditCourseRefund(userId: string, courseBookingId: string, amount: number, description?: string): Promise<WalletMovement | null> {
     if (amount <= 0) {
       return null;

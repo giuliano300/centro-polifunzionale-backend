@@ -16,7 +16,7 @@ export class SystemSettingsController {
   }
 
   @Put()
-  updateSettings(@Body() dto: { newUserWalletCredit?: number; newClientWalletCredit?: number; newManagerWalletCredit?: number }) {
+  updateSettings(@Body() dto: { newUserWalletCredit?: number; newClientWalletCredit?: number; newManagerWalletCredit?: number; bookingHoldMinutes?: number }) {
     return this.systemSettingsService.updateSettings(dto);
   }
 }

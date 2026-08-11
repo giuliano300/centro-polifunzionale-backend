@@ -71,6 +71,9 @@ export class PaymentService {
     allowedUserId?: string,
   ): Promise<Payment> {
     const booking = await this.assertBookingAccess(bookingId, allowedUserId);
+    if (booking.status === 'expired' || (booking.status === 'pending' && booking.holdExpiresAt && booking.holdExpiresAt <= new Date())) {
+      throw new BadRequestException('Il tempo di priorita della prenotazione e scaduto');
+    }
     const method = options.method || 'manual';
     this.assertPaymentMethodAllowed(booking, method);
     const bookingObjectId = new Types.ObjectId(bookingId);
@@ -82,7 +85,7 @@ export class PaymentService {
 
     if (alreadyPaid) {
       await this.closeDuplicatePending(bookingObjectId, alreadyPaid._id);
-      await this.bookingModel.findByIdAndUpdate(bookingId, { status: 'confirmed' }).exec();
+      await this.bookingModel.findByIdAndUpdate(bookingId, { $set: { status: 'confirmed' }, $unset: { holdExpiresAt: 1 } }).exec();
       return alreadyPaid;
     }
 
@@ -115,7 +118,7 @@ export class PaymentService {
     const saved = await payment.save();
 
     await this.closeDuplicatePending(bookingObjectId, saved._id);
-    await this.bookingModel.findByIdAndUpdate(bookingId, { status: 'confirmed' }).exec();
+    await this.bookingModel.findByIdAndUpdate(bookingId, { $set: { status: 'confirmed' }, $unset: { holdExpiresAt: 1 } }).exec();
     await this.notifyPaymentConfirmed(bookingId, saved.amount, method);
     return saved;
   }
@@ -129,6 +132,14 @@ export class PaymentService {
     const booking = await this.assertBookingAccess(bookingId, allowedUserId);
     this.assertPaymentMethodAllowed(booking, provider);
     const payment = await this.getOrCreatePendingPayment(bookingId);
+    if (payment.provider === provider && payment.checkoutUrl && payment.transactionId) {
+      return {
+        provider,
+        paymentId: (payment._id as Types.ObjectId).toString(),
+        checkoutUrl: payment.checkoutUrl,
+        transactionId: payment.transactionId,
+      };
+    }
     const amount = payment.amount;
     if (!amount || amount <= 0) {
       throw new BadRequestException('Importo pagamento non valido');

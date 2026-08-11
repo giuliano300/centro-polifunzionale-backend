@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../../services/users.service';
 import * as bcrypt from 'bcrypt';
@@ -18,6 +18,9 @@ import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from 'src/roles/user-role.enum';
 import { CompleteClientInviteDto, RequestClientInvitePhoneOtpDto } from 'src/dto/client-invite.dto';
+import { CompleteSocialRegistrationDto, RequestSocialPhoneOtpDto, SocialSignInDto } from 'src/dto/social-auth.dto';
+import { SocialAuthCompletion, SocialAuthCompletionDocument } from 'src/schemas/social-auth-completion.schema';
+import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 
 @Injectable()
 export class AuthService {
@@ -27,6 +30,7 @@ export class AuthService {
     @InjectModel(ManagerRegistrationOtp.name) private otpModel: Model<ManagerRegistrationOtpDocument>,
     @InjectModel(ManagerPasswordReset.name) private passwordResetModel: Model<ManagerPasswordResetDocument>,
     @InjectModel(ClientRegistrationOtp.name) private clientOtpModel: Model<ClientRegistrationOtpDocument>,
+    @InjectModel(SocialAuthCompletion.name) private socialCompletionModel: Model<SocialAuthCompletionDocument>,
     private configService: ConfigService,
   ) {}
 
@@ -52,6 +56,99 @@ export class AuthService {
 
   async register(createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
+  }
+
+  async socialSignIn(dto: SocialSignInDto) {
+    const identity = await this.verifySocialIdentity(dto.provider, dto.idToken, dto.name);
+    let user = await this.usersService.findBySocialIdentity(dto.provider, identity.subject);
+    if (!user) {
+      user = await this.usersService.findByEmail(identity.email) as any;
+    }
+
+    if (user?.isActive === false) {
+      throw new UnauthorizedException('Utente disattivato, contattare l amministrazione.');
+    }
+    if (user && ![UserRole.Gestore, UserRole.Admin].includes(user.role)) {
+      throw new ForbiddenException('Questa email appartiene a un profilo cliente.');
+    }
+
+    const hasRequiredProfile = Boolean(user?.phone && user?.taxCode && user?.acceptedDataProcessingAt);
+    if (user && hasRequiredProfile) {
+      const linked = await this.usersService.linkSocialIdentity(String((user as any)._id || (user as any).id), dto.provider, identity.subject);
+      return { completionRequired: false, ...(await this.login(linked as any)) };
+    }
+
+    const jti = randomBytes(18).toString('hex');
+    const completionToken = this.jwtService.sign({
+      purpose: 'social-registration',
+      jti,
+      provider: dto.provider,
+      providerSubject: identity.subject,
+      email: identity.email,
+      name: identity.name,
+      userId: user ? String((user as any)._id || (user as any).id) : undefined,
+    }, { expiresIn: '20m' });
+
+    return {
+      completionRequired: true,
+      completionToken,
+      profile: { name: identity.name, email: identity.email },
+      missingFields: ['phone', 'taxCode', 'acceptedDataProcessing', 'phoneOtp'],
+    };
+  }
+
+  async requestSocialPhoneOtp(dto: RequestSocialPhoneOtpDto) {
+    const payload = await this.verifySocialCompletionToken(dto.completionToken);
+    const phone = dto.phone.replace(/[\s./()-]/g, '');
+    const phoneOtp = this.generateOtp();
+    await this.socialCompletionModel.findOneAndUpdate(
+      { jti: payload.jti },
+      {
+        $set: {
+          phone,
+          phoneOtpHash: await bcrypt.hash(phoneOtp, 10),
+          attempts: 0,
+          used: false,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      },
+      { upsert: true, new: true },
+    ).exec();
+    return {
+      requested: true,
+      phone,
+      expiresInMinutes: 10,
+      ...(this.configService.get<string>('NODE_ENV') === 'production' ? {} : { devPhoneOtp: phoneOtp }),
+    };
+  }
+
+  async completeSocialRegistration(dto: CompleteSocialRegistrationDto) {
+    if (!dto.acceptedDataProcessing) {
+      throw new BadRequestException('Devi accettare il trattamento dei dati personali.');
+    }
+    const payload = await this.verifySocialCompletionToken(dto.completionToken);
+    const request = await this.socialCompletionModel.findOne({ jti: payload.jti, used: false }).exec();
+    if (!request || request.expiresAt.getTime() < Date.now() || request.phone !== dto.phone.replace(/[\s./()-]/g, '')) {
+      throw new BadRequestException('OTP scaduto o non valido.');
+    }
+    if (request.attempts >= 5 || !await bcrypt.compare(dto.phoneOtp, request.phoneOtpHash)) {
+      request.attempts += 1;
+      await request.save();
+      throw new BadRequestException('OTP cellulare non valido.');
+    }
+
+    const user = await this.usersService.completeSocialProfile({
+      userId: payload.userId,
+      provider: payload.provider,
+      providerSubject: payload.providerSubject,
+      email: payload.email,
+      name: dto.name,
+      phone: dto.phone,
+      taxCode: dto.taxCode,
+    });
+    request.used = true;
+    await request.save();
+    return { completionRequired: false, ...(await this.login(user as any)) };
   }
 
   async resetManagerPassword(dto: ResetPasswordDto) {
@@ -346,5 +443,53 @@ export class AuthService {
 
   private generateOtp(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private async verifySocialIdentity(provider: 'google' | 'apple', idToken: string, suppliedName?: string) {
+    const audience = this.configService.get<string>(provider === 'google' ? 'GOOGLE_CLIENT_ID' : 'APPLE_CLIENT_ID');
+    if (!audience) {
+      throw new ServiceUnavailableException(`Accesso ${provider === 'google' ? 'Google' : 'Apple'} non configurato.`);
+    }
+    const jwksUrl = provider === 'google'
+      ? 'https://www.googleapis.com/oauth2/v3/certs'
+      : 'https://appleid.apple.com/auth/keys';
+    const issuer = provider === 'google'
+      ? ['https://accounts.google.com', 'accounts.google.com']
+      : 'https://appleid.apple.com';
+    let payload: JWTPayload;
+    try {
+      ({ payload } = await jwtVerify(idToken, createRemoteJWKSet(new URL(jwksUrl)), { audience, issuer }));
+    } catch {
+      throw new UnauthorizedException('Identità social non valida o scaduta.');
+    }
+    const email = String(payload.email || '').trim().toLowerCase();
+    const emailVerified = payload.email_verified === true || payload.email_verified === 'true';
+    if (!payload.sub || !email || !emailVerified) {
+      throw new UnauthorizedException('Il provider non ha restituito un indirizzo email verificato.');
+    }
+    return {
+      subject: payload.sub,
+      email,
+      name: String(payload.name || suppliedName || '').trim(),
+    };
+  }
+
+  private async verifySocialCompletionToken(token: string): Promise<{
+    jti: string;
+    provider: 'google' | 'apple';
+    providerSubject: string;
+    email: string;
+    name: string;
+    userId?: string;
+  }> {
+    try {
+      const payload = await this.jwtService.verifyAsync(token);
+      if (payload?.purpose !== 'social-registration' || !payload?.jti || !payload?.providerSubject || !payload?.email) {
+        throw new Error('invalid payload');
+      }
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Sessione social scaduta. Ripeti l’accesso.');
+    }
   }
 }

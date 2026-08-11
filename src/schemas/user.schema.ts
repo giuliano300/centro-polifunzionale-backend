@@ -60,6 +60,18 @@ export class User {
 
   @Prop({ type: [String], default: [] })
   interestedTags: string[];
+
+  @Prop({ type: [String], default: [] })
+  authProviders: string[];
+
+  @Prop({ unique: true, sparse: true })
+  googleSubject?: string;
+
+  @Prop({ unique: true, sparse: true })
+  appleSubject?: string;
+
+  @Prop()
+  acceptedDataProcessingAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

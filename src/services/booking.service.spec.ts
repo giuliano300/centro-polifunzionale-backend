@@ -35,6 +35,7 @@ function serviceWithBookings(bookings: unknown[]): BookingService {
     {} as never,
     {} as never,
     {} as never,
+    { bookingHoldMinutes: jest.fn().mockResolvedValue(15) } as never,
   );
 }
 

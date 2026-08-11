@@ -54,6 +54,68 @@ export class UsersService {
     return await this.userModel.findOne({ email: email.trim().toLowerCase() }).exec();
   }
 
+  async findBySocialIdentity(provider: 'google' | 'apple', subject: string): Promise<UserDocument | null> {
+    const field = provider === 'google' ? 'googleSubject' : 'appleSubject';
+    return this.userModel.findOne({ [field]: subject }).exec();
+  }
+
+  async linkSocialIdentity(userId: string, provider: 'google' | 'apple', subject: string): Promise<UserDocument> {
+    const field = provider === 'google' ? 'googleSubject' : 'appleSubject';
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('Utente non trovato');
+    }
+    (user as unknown as Record<string, unknown>)[field] = subject;
+    user.authProviders = [...new Set([...(user.authProviders || []), provider])];
+    return user.save();
+  }
+
+  async completeSocialProfile(input: {
+    userId?: string;
+    provider: 'google' | 'apple';
+    providerSubject: string;
+    email: string;
+    name: string;
+    phone: string;
+    taxCode: string;
+  }): Promise<UserDocument> {
+    const normalizedPhone = input.phone.replace(/[\s./()-]/g, '');
+    const normalizedTaxCode = input.taxCode.trim().toUpperCase();
+    this.validateItalianMobilePhone(normalizedPhone);
+    this.validateTaxCode(normalizedTaxCode);
+
+    if (input.userId) {
+      await this.assertUniqueIdentityExcludingUser(input.userId, input.email, normalizedPhone, normalizedTaxCode);
+      const user = await this.userModel.findById(input.userId).exec();
+      if (!user) {
+        throw new NotFoundException('Utente non trovato');
+      }
+      user.name = input.name.trim();
+      user.phone = normalizedPhone;
+      user.taxCode = normalizedTaxCode;
+      user.acceptedDataProcessingAt = new Date();
+      const field = input.provider === 'google' ? 'googleSubject' : 'appleSubject';
+      (user as unknown as Record<string, unknown>)[field] = input.providerSubject;
+      user.authProviders = [...new Set([...(user.authProviders || []), input.provider])];
+      return user.save();
+    }
+
+    const created = await this.create({
+      name: input.name.trim(),
+      email: input.email.trim().toLowerCase(),
+      phone: normalizedPhone,
+      taxCode: normalizedTaxCode,
+      password: `Social${randomBytes(24).toString('hex')}!`,
+      role: UserRole.Gestore,
+      isActive: true,
+    }) as UserDocument;
+    created.acceptedDataProcessingAt = new Date();
+    const field = input.provider === 'google' ? 'googleSubject' : 'appleSubject';
+    (created as unknown as Record<string, unknown>)[field] = input.providerSubject;
+    created.authProviders = [input.provider];
+    return created.save();
+  }
+
   async assertUniqueIdentity(email?: string, phone?: string, taxCode?: string): Promise<void> {
     const normalizedEmail = email?.trim().toLowerCase();
     const normalizedPhone = phone?.trim();

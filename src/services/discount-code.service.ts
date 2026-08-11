@@ -116,6 +116,14 @@ export class DiscountCodeService {
     await this.discountModel.updateOne({ code: code.trim().toUpperCase() }, { $inc: { usedCount: 1 } }).exec();
   }
 
+  async releaseUsed(code?: string): Promise<void> {
+    if (!code) return;
+    await this.discountModel.updateOne(
+      { code: code.trim().toUpperCase(), usedCount: { $gt: 0 } },
+      { $inc: { usedCount: -1 } },
+    ).exec();
+  }
+
   private normalize(dto: CreateDiscountCodeDto | UpdateDiscountCodeDto): Partial<DiscountCode> {
     const isAutomatic = dto.isAutomatic === true;
     if (!isAutomatic && !dto.code?.trim()) {

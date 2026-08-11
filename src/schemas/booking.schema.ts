@@ -38,10 +38,17 @@ export class Booking extends Document {
   @Prop({ type: [Number], default: [] })
   sectorIndexes: number[];
 
-  @Prop({ default: 'pending', enum: ['pending', 'confirmed', 'cancellation_requested', 'cancelled'] })
-  status: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled';
+  @Prop({ default: 'pending', enum: ['pending', 'confirmed', 'cancellation_requested', 'cancelled', 'expired'] })
+  status: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled' | 'expired';
+
+  @Prop({ type: Date, index: true })
+  holdExpiresAt?: Date;
+
+  @Prop()
+  idempotencyKey?: string;
 
 }
 
 export type BookingDocument = Booking & Document;
 export const BookingSchema = SchemaFactory.createForClass(Booking);
+BookingSchema.index({ user: 1, idempotencyKey: 1 }, { unique: true, sparse: true });

@@ -10,6 +10,7 @@ import { ManagerRegistrationOtp, ManagerRegistrationOtpSchema } from 'src/schema
 import { ManagerPasswordReset, ManagerPasswordResetSchema } from 'src/schemas/manager-password-reset.schema';
 import { ClientRegistrationOtp, ClientRegistrationOtpSchema } from 'src/schemas/client-registration-otp.schema';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { SocialAuthCompletion, SocialAuthCompletionSchema } from 'src/schemas/social-auth-completion.schema';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       { name: ManagerRegistrationOtp.name, schema: ManagerRegistrationOtpSchema },
       { name: ManagerPasswordReset.name, schema: ManagerPasswordResetSchema },
       { name: ClientRegistrationOtp.name, schema: ClientRegistrationOtpSchema },
+      { name: SocialAuthCompletion.name, schema: SocialAuthCompletionSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
