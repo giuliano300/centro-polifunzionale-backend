@@ -20,6 +20,9 @@ export class SocialAuthCompletion {
   @Prop({ default: false })
   used: boolean;
 
+  @Prop()
+  lastOtpRequestedAt?: Date;
+
   @Prop({ required: true, expires: 0 })
   expiresAt: Date;
 }

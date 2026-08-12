@@ -24,6 +24,12 @@ export class ClientRegistrationOtp {
   passwordHash: string;
 
   @Prop({ required: true })
+  acceptedDataProcessingAt: Date;
+
+  @Prop({ required: true })
+  requestedAt: Date;
+
+  @Prop({ required: true })
   emailOtpHash: string;
 
   @Prop({ required: true })

@@ -1,8 +1,8 @@
 import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 
 export class SocialSignInDto {
-  @IsIn(['google', 'apple'])
-  provider: 'google' | 'apple';
+  @IsIn(['google', 'facebook'])
+  provider: 'google' | 'facebook';
 
   @IsString()
   @IsNotEmpty()

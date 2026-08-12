@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../schemas/user.schema';
@@ -13,6 +13,10 @@ import { InviteClientDto, CompleteClientInviteDto, RequestClientInvitePhoneOtpDt
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { NotificationsService } from './notifications.service';
+
+const OTP_VALIDITY_MINUTES = 2;
+const OTP_RESEND_SECONDS = 120;
+const OTP_RESEND_MILLISECONDS = OTP_RESEND_SECONDS * 1000;
 
 @Injectable()
 export class UsersService {
@@ -54,13 +58,13 @@ export class UsersService {
     return await this.userModel.findOne({ email: email.trim().toLowerCase() }).exec();
   }
 
-  async findBySocialIdentity(provider: 'google' | 'apple', subject: string): Promise<UserDocument | null> {
-    const field = provider === 'google' ? 'googleSubject' : 'appleSubject';
+  async findBySocialIdentity(provider: 'google' | 'facebook', subject: string): Promise<UserDocument | null> {
+    const field = provider === 'google' ? 'googleSubject' : 'facebookSubject';
     return this.userModel.findOne({ [field]: subject }).exec();
   }
 
-  async linkSocialIdentity(userId: string, provider: 'google' | 'apple', subject: string): Promise<UserDocument> {
-    const field = provider === 'google' ? 'googleSubject' : 'appleSubject';
+  async linkSocialIdentity(userId: string, provider: 'google' | 'facebook', subject: string): Promise<UserDocument> {
+    const field = provider === 'google' ? 'googleSubject' : 'facebookSubject';
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('Utente non trovato');
@@ -72,7 +76,7 @@ export class UsersService {
 
   async completeSocialProfile(input: {
     userId?: string;
-    provider: 'google' | 'apple';
+    provider: 'google' | 'facebook';
     providerSubject: string;
     email: string;
     name: string;
@@ -94,7 +98,7 @@ export class UsersService {
       user.phone = normalizedPhone;
       user.taxCode = normalizedTaxCode;
       user.acceptedDataProcessingAt = new Date();
-      const field = input.provider === 'google' ? 'googleSubject' : 'appleSubject';
+      const field = input.provider === 'google' ? 'googleSubject' : 'facebookSubject';
       (user as unknown as Record<string, unknown>)[field] = input.providerSubject;
       user.authProviders = [...new Set([...(user.authProviders || []), input.provider])];
       return user.save();
@@ -110,7 +114,7 @@ export class UsersService {
       isActive: true,
     }) as UserDocument;
     created.acceptedDataProcessingAt = new Date();
-    const field = input.provider === 'google' ? 'googleSubject' : 'appleSubject';
+    const field = input.provider === 'google' ? 'googleSubject' : 'facebookSubject';
     (created as unknown as Record<string, unknown>)[field] = input.providerSubject;
     created.authProviders = [input.provider];
     return created.save();
@@ -290,6 +294,7 @@ export class UsersService {
     user.completionPhoneOtpHash = undefined;
     user.completionPhoneOtpTarget = undefined;
     user.completionPhoneOtpExpiresAt = undefined;
+    user.completionPhoneOtpRequestedAt = undefined;
     const saved = await user.save();
 
     const credit = await this.systemSettingsService.newUserWalletCredit(saved.role);
@@ -304,8 +309,18 @@ export class UsersService {
     return { completed: true, user: saved };
   }
 
-  async requestInvitePhoneOtp(dto: RequestClientInvitePhoneOtpDto): Promise<{ requested: boolean; phone: string; expiresInMinutes: number; devPhoneOtp?: string }> {
+  async requestInvitePhoneOtp(dto: RequestClientInvitePhoneOtpDto): Promise<{ requested: boolean; phone: string; expiresInMinutes: number; retryAfterSeconds: number; devPhoneOtp?: string }> {
     const user = await this.findPendingInviteByToken(dto.token);
+    if (user.completionPhoneOtpRequestedAt) {
+      const elapsed = Date.now() - user.completionPhoneOtpRequestedAt.getTime();
+      if (elapsed < OTP_RESEND_MILLISECONDS) {
+        const retryAfterSeconds = Math.ceil((OTP_RESEND_MILLISECONDS - elapsed) / 1000);
+        throw new HttpException({
+          message: `Attendi ${retryAfterSeconds} secondi prima di richiedere un nuovo OTP.`,
+          retryAfterSeconds,
+        }, HttpStatus.TOO_MANY_REQUESTS);
+      }
+    }
     const phone = this.normalizeItalianMobilePhone(dto.phone);
     this.validateItalianMobilePhone(phone);
     await this.assertUniqueIdentityExcludingUser((user._id as Types.ObjectId).toString(), undefined, phone);
@@ -313,13 +328,15 @@ export class UsersService {
     const phoneOtp = this.generateOtp();
     user.completionPhoneOtpHash = await bcrypt.hash(phoneOtp, 10);
     user.completionPhoneOtpTarget = phone;
-    user.completionPhoneOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    user.completionPhoneOtpExpiresAt = new Date(Date.now() + OTP_VALIDITY_MINUTES * 60 * 1000);
+    user.completionPhoneOtpRequestedAt = new Date();
     await user.save();
 
     return {
       requested: true,
       phone,
-      expiresInMinutes: 10,
+      expiresInMinutes: OTP_VALIDITY_MINUTES,
+      retryAfterSeconds: OTP_RESEND_SECONDS,
       devPhoneOtp: phoneOtp,
     };
   }
@@ -411,13 +428,13 @@ export class UsersService {
     await this.userModel.findByIdAndUpdate(id, {
       profilePhoneOtpHash: await bcrypt.hash(phoneOtp, 10),
       profilePhoneOtpTarget: normalizedPhone,
-      profilePhoneOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      profilePhoneOtpExpiresAt: new Date(Date.now() + OTP_VALIDITY_MINUTES * 60 * 1000),
     }).exec();
 
     return {
       requested: true,
       phone: normalizedPhone,
-      expiresInMinutes: 10,
+      expiresInMinutes: OTP_VALIDITY_MINUTES,
       devPhoneOtp: phoneOtp,
     };
   }

@@ -50,6 +50,9 @@ export class User {
   completionPhoneOtpExpiresAt?: Date;
 
   @Prop()
+  completionPhoneOtpRequestedAt?: Date;
+
+  @Prop()
   profilePhoneOtpHash?: string;
 
   @Prop()
@@ -69,6 +72,9 @@ export class User {
 
   @Prop({ unique: true, sparse: true })
   appleSubject?: string;
+
+  @Prop({ unique: true, sparse: true })
+  facebookSubject?: string;
 
   @Prop()
   acceptedDataProcessingAt?: Date;
