@@ -74,6 +74,14 @@ export class UsersService {
     return user.save();
   }
 
+  async unlinkSocialIdentity(userId: string, provider: 'google' | 'facebook', subject: string): Promise<void> {
+    const field = provider === 'google' ? 'googleSubject' : 'facebookSubject';
+    await this.userModel.updateOne(
+      { _id: new Types.ObjectId(userId), [field]: subject },
+      { $unset: { [field]: '' }, $pull: { authProviders: provider } },
+    ).exec();
+  }
+
   async completeSocialProfile(input: {
     userId?: string;
     provider: 'google' | 'facebook';

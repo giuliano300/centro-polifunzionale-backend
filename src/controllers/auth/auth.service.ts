@@ -65,6 +65,14 @@ export class AuthService {
   async socialSignIn(dto: SocialSignInDto) {
     const identity = await this.verifySocialIdentity(dto.provider, dto.idToken, dto.name);
     let user = await this.usersService.findBySocialIdentity(dto.provider, identity.subject);
+    if (user && user.email.trim().toLowerCase() !== identity.email) {
+      await this.usersService.unlinkSocialIdentity(
+        String((user as any)._id || (user as any).id),
+        dto.provider,
+        identity.subject,
+      );
+      user = null;
+    }
     if (!user) {
       user = await this.usersService.findByEmail(identity.email) as any;
     }
