@@ -15,8 +15,8 @@ async function bootstrap() {
   });
 
   const config = new DocumentBuilder()
-    .setTitle("N'Agorà API")
-    .setDescription("API per la gestione di N'Agorà")
+    .setTitle("NAgorà API")
+    .setDescription("API per la gestione di NAgorà")
     .setVersion('1.0')
     .addBearerAuth(
     {

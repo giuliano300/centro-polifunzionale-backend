@@ -182,7 +182,7 @@ export class UsersService {
     return { updated: true };
   }
 
-  async findAll(filterDto: GetUsersFilterDto): Promise<User[]> {
+  async findAll(filterDto: GetUsersFilterDto): Promise<Array<User & { walletBalance: number }>> {
     const { email, role, excludeRole, search, limit = 10, page = 1, sortBy = '_id', sortOrder = 'desc' } = filterDto;
 
     const filter: Record<string, unknown> = {};    
@@ -202,12 +202,17 @@ export class UsersService {
       ];
     }
 
-    return this.userModel
+    const users = await this.userModel
       .find(filter)
       .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
       .limit(limit)
       .skip((page - 1) * limit)
-      .exec();  
+      .exec();
+    const balances = await this.walletService.balances(users.map((user) => (user._id as Types.ObjectId).toString()));
+    return users.map((user) => ({
+      ...user.toObject(),
+      walletBalance: balances[(user._id as Types.ObjectId).toString()] || 0,
+    })) as Array<User & { walletBalance: number }>;
   }
 
   async findById(id: string): Promise<User> {

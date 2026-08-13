@@ -16,7 +16,7 @@ export class UsersController {
   @Get()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.Admin, UserRole.Gestore)
-  async findAll(@Query() filterDto: GetUsersFilterDto): Promise<User[]> {
+  async findAll(@Query() filterDto: GetUsersFilterDto): Promise<Array<User & { walletBalance: number }>> {
     return this.usersService.findAll(filterDto);
   }
 

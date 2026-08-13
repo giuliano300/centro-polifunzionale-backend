@@ -101,38 +101,40 @@ export class BookingService {
     });
     const savedBooking = await booking.save();
 
-    const walletBalance = Math.max(await this.walletService.balance(targetUserId), 0);
-    const walletAmount = Math.min(walletBalance, amount);
-    const externalAmount = Math.max(amount - walletAmount, 0);
+    await this.walletService.withUserWalletLock(targetUserId, async () => {
+      const walletBalance = Math.max(await this.walletService.balance(targetUserId), 0);
+      const walletAmount = Math.min(walletBalance, amount);
+      const externalAmount = Math.max(amount - walletAmount, 0);
 
-    if (walletAmount > 0) {
-      await this.walletService.debitBookingPayment(
-        targetUserId,
-        (savedBooking._id as Types.ObjectId).toString(),
+      if (walletAmount > 0) {
+        await this.walletService.debitBookingPayment(
+          targetUserId,
+          (savedBooking._id as Types.ObjectId).toString(),
+          walletAmount,
+          `Utilizzo wallet per prenotazione ${savedBooking.name || savedBooking._id}`,
+        );
+      }
+
+      await this.paymentModel.create({
+        bookingId: savedBooking._id,
+        amount: externalAmount,
+        totalAmount: amount,
         walletAmount,
-        `Utilizzo wallet per prenotazione ${savedBooking.name || savedBooking._id}`,
-      );
-    }
-
-    await this.paymentModel.create({
-      bookingId: savedBooking._id,
-      amount: externalAmount,
-      totalAmount: amount,
-      walletAmount,
-      externalAmount,
-      originalAmount,
-      discountAmount: discount.amount,
-      discountCode: discount.code,
-      status: externalAmount <= 0 ? 'PAID' : 'PENDING',
-      method: externalAmount <= 0 ? 'wallet' : 'manual',
-      provider: 'manual',
-      transactionId: externalAmount <= 0 ? `WALLET-${Date.now()}` : undefined,
+        externalAmount,
+        originalAmount,
+        discountAmount: discount.amount,
+        discountCode: discount.code,
+        status: externalAmount <= 0 ? 'PAID' : 'PENDING',
+        method: externalAmount <= 0 ? 'wallet' : 'manual',
+        provider: 'manual',
+        transactionId: externalAmount <= 0 ? `WALLET-${Date.now()}` : undefined,
+      });
+      if (externalAmount <= 0) {
+        savedBooking.status = 'confirmed';
+        savedBooking.holdExpiresAt = undefined;
+        await savedBooking.save();
+      }
     });
-    if (externalAmount <= 0) {
-      savedBooking.status = 'confirmed';
-      savedBooking.holdExpiresAt = undefined;
-      await savedBooking.save();
-    }
     await this.discountCodeService.markUsed(discount.code);
     const manager = await this.userModel.findById(targetUserId).exec();
     await this.notificationsService.create({

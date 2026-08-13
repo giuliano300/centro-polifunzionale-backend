@@ -515,6 +515,21 @@ async function main() {
     })),
   ]);
 
+  const seededWalletBalances = new Map<string, number>(
+    (await WalletMovementModel.aggregate<{ _id: Types.ObjectId; balance: number }>([
+      {
+        $group: {
+          _id: '$user',
+          balance: {
+            $sum: {
+              $cond: [{ $eq: ['$type', 'credit'] }, '$amount', { $multiply: ['$amount', -1] }],
+            },
+          },
+        },
+      },
+    ]).exec()).map((item) => [item._id.toString(), Math.max(item.balance, 0)]),
+  );
+
   const courses: any[] = [];
   for (let index = 0; index < normalBookingDocs.length; index += 1) {
     const booking = normalBookingDocs[index];
@@ -526,7 +541,7 @@ async function main() {
     const title = `${catalog[0]} ${index + 1}`;
     const course = await CourseModel.create({
       title,
-      description: `Un appuntamento curato per vivere N'Agora con una proposta concreta, accessibile e ben organizzata. ${title} unisce qualita, relazione e attenzione agli spazi.`,
+      description: `Un appuntamento curato per vivere NAgorà con una proposta concreta, accessibile e ben organizzata. ${title} unisce qualita, relazione e attenzione agli spazi.`,
       tags: catalog[1],
       imageUrl: image.card,
       bannerImageUrl: image.banner,
@@ -559,7 +574,9 @@ async function main() {
     for (let offset = 0; offset < selectedClients.length; offset += 1) {
       const client = selectedClients[offset];
       const totalAmount = Number(course.price || 0);
-      const walletAmount = totalAmount > 0 && offset === 0 ? Math.min(10, totalAmount) : 0;
+      const clientWalletBalance = seededWalletBalances.get(client._id.toString()) || 0;
+      const walletAmount = totalAmount > 0 && offset === 0 ? Math.min(10, totalAmount, clientWalletBalance) : 0;
+      seededWalletBalances.set(client._id.toString(), clientWalletBalance - walletAmount);
       const externalAmount = Math.max(totalAmount - walletAmount, 0);
       const paymentMethod = totalAmount === 0
         ? undefined
