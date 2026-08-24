@@ -356,7 +356,7 @@ async function main() {
       courseCreationAdvanceHours: 2,
       paymentMethods: [PaymentMethod.Cash, PaymentMethod.Stripe, PaymentMethod.Paypal, PaymentMethod.Nexi],
       openingHours: weeklyHours('08:00', '22:00', 4),
-      exceptionalClosures: [{ startDate: makeDate(9, 16), endDate: makeDate(9, 17), reason: 'Allestimento speciale' }],
+      exceptionalClosures: [],
       isAvailable: true,
     },
     {

@@ -47,6 +47,21 @@ export class Booking extends Document {
   @Prop()
   idempotencyKey?: string;
 
+  @Prop({ index: true })
+  seriesId?: string;
+
+  @Prop({ min: 0 })
+  seriesIndex?: number;
+
+  @Prop({ min: 1 })
+  seriesCount?: number;
+
+  @Prop({ enum: ['full', 'automatic'] })
+  seriesPaymentPlan?: 'full' | 'automatic';
+
+  @Prop({ min: 1, max: 90 })
+  recurringChargeAdvanceDays?: number;
+
 }
 
 export type BookingDocument = Booking & Document;

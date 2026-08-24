@@ -6,6 +6,7 @@ import { RolesGuard } from "../../roles/roles.guard";
 import { BookingService } from "../../services/booking.service";
 import { AuthGuard } from "@nestjs/passport";
 import { FilterBookingsDto } from "src/filters/filter-bookings.dto";
+import { CreateRecurringBookingDto, RecurringAvailabilityQueryDto } from "src/dto/create-recurring-booking.dto";
 
 type PopulatedUserRef = string | { _id?: { toString(): string }; toString(): string };
 
@@ -22,6 +23,14 @@ export class BookingsController {
       userId: req.user.role === UserRole.Cliente ? req.user.userId : dto.userId,
     };
     return this.bookingsService.create(targetDto, req.user.userId, idempotencyKey);
+  }
+
+  @Post('recurring')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async createRecurring(@Body() dto: CreateRecurringBookingDto, @Req() req, @Headers('idempotency-key') idempotencyKey?: string) {
+    const targetDto = { ...dto, userId: dto.userId || req.user.userId };
+    return this.bookingsService.createRecurring(targetDto, req.user.userId, idempotencyKey);
   }
 
   @Get()
@@ -49,6 +58,22 @@ export class BookingsController {
       ? sectorIndexes.split(',').map((value) => Number(value)).filter((value) => Number.isInteger(value))
       : [];
     return this.bookingsService.availability(spaceId, date, rentalMode || 'time', Number(workstationQuantity || 1), Number(sectorQuantity || 0), parsedSectorIndexes);
+  }
+
+  @Get('recurring-availability')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async recurringAvailability(@Query() query: RecurringAvailabilityQueryDto) {
+    const sectorIndexes = query.sectorIndexes
+      ? query.sectorIndexes.split(',').map(Number).filter(Number.isInteger)
+      : [];
+    return this.bookingsService.recurringAvailability({
+      ...query,
+      rentalMode: query.rentalMode || 'time',
+      workstationQuantity: Number(query.workstationQuantity || 1),
+      sectorQuantity: Number(query.sectorQuantity || 0),
+      sectorIndexes,
+    });
   }
 
   @Get(':id')

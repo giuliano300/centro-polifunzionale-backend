@@ -47,6 +47,21 @@ export class SpaceExceptionalClosureDto {
   reason?: string;
 }
 
+export class SpaceSectorRecurringSettingDto {
+  @IsInt()
+  @Min(0)
+  sectorIndex: number;
+
+  @IsArray()
+  @IsIn(['full', 'automatic'], { each: true })
+  paymentOptions: Array<'full' | 'automatic'>;
+
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  chargeAdvanceDays: number;
+}
+
 export class CreateSpaceDto {
   @ApiProperty({ example: 'Sala Yoga', description: 'Nome dello spazio' })
   @IsString()
@@ -145,6 +160,26 @@ export class CreateSpaceDto {
   @IsArray()
   @IsIn(PAYMENT_METHOD_VALUES, { each: true })
   paymentMethods?: PaymentMethod[];
+
+  @ApiProperty({ example: ['full', 'automatic'], required: false })
+  @IsOptional()
+  @IsArray()
+  @IsIn(['full', 'automatic'], { each: true })
+  recurringPaymentOptions?: Array<'full' | 'automatic'>;
+
+  @ApiProperty({ example: 7, description: 'Giorni di anticipo per gli addebiti automatici', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  recurringChargeAdvanceDays?: number;
+
+  @ApiProperty({ description: 'Configurazione ricorrenza specifica per ciascuna area', required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SpaceSectorRecurringSettingDto)
+  sectorRecurringSettings?: SpaceSectorRecurringSettingDto[];
 
   @ApiProperty({ description: 'Orari settimanali di apertura e chiusura', required: false })
   @IsOptional()
