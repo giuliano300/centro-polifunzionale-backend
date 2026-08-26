@@ -25,6 +25,7 @@ export type RecurringPaymentOption = 'full' | 'automatic';
 
 export class SpaceSectorRecurringSetting {
   sectorIndex: number;
+  enabled: boolean;
   paymentOptions: RecurringPaymentOption[];
   chargeAdvanceDays: number;
 }
@@ -88,12 +89,16 @@ export class Space {
   @Prop({ type: [String], enum: ['full', 'automatic'], default: ['full'] })
   recurringPaymentOptions: RecurringPaymentOption[];
 
+  @Prop({ default: false })
+  recurringEnabled: boolean;
+
   @Prop({ default: 7, min: 1, max: 90 })
   recurringChargeAdvanceDays: number;
 
   @Prop({
     type: [{
       sectorIndex: { type: Number, required: true, min: 0 },
+      enabled: { type: Boolean, default: false },
       paymentOptions: { type: [String], enum: ['full', 'automatic'], default: ['full'] },
       chargeAdvanceDays: { type: Number, default: 7, min: 1, max: 90 },
     }],

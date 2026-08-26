@@ -117,3 +117,56 @@ describe('BookingService aree stanza', () => {
     expect(amountForWhole).toBe(200);
   });
 });
+
+describe('BookingService ricorrenza multi-giorno', () => {
+  it('genera più giorni settimanali mantenendo un orario diverso per ciascun giorno', () => {
+    const service = serviceWithBookings([]);
+    const dates = (service as never as { recurringDates: Function }).recurringDates(
+      '2026-09-01',
+      '2026-09-14',
+      [
+        { date: '2026-09-01', startTime: '09:00', endTime: '10:00' },
+        { date: '2026-09-03', startTime: '15:00', endTime: '17:00' },
+      ],
+    );
+
+    expect(dates).toEqual([
+      { date: '2026-09-01', startTime: '09:00', endTime: '10:00' },
+      { date: '2026-09-03', startTime: '15:00', endTime: '17:00' },
+      { date: '2026-09-08', startTime: '09:00', endTime: '10:00' },
+      { date: '2026-09-10', startTime: '15:00', endTime: '17:00' },
+    ]);
+  });
+
+  it('rifiuta due selezioni dello stesso giorno della settimana', () => {
+    const service = serviceWithBookings([]);
+    expect(() => (service as never as { recurringDates: Function }).recurringDates(
+      '2026-09-01',
+      '2026-09-30',
+      [
+        { date: '2026-09-01', startTime: '09:00', endTime: '10:00' },
+        { date: '2026-09-08', startTime: '15:00', endTime: '16:00' },
+      ],
+    )).toThrow(BadRequestException);
+  });
+
+  it('richiede l’abilitazione comune su tutte le aree selezionate', () => {
+    const service = serviceWithBookings([]);
+    const space = {
+      ...baseSpace,
+      recurringEnabled: true,
+      recurringPaymentOptions: ['full', 'automatic'],
+      recurringChargeAdvanceDays: 5,
+      sectorRecurringSettings: [
+        { sectorIndex: 0, enabled: true, paymentOptions: ['full', 'automatic'], chargeAdvanceDays: 3 },
+        { sectorIndex: 1, enabled: false, paymentOptions: ['full'], chargeAdvanceDays: 7 },
+      ],
+    };
+
+    expect((service as never as { getRecurringConfiguration: Function }).getRecurringConfiguration(space, [0])).toEqual({
+      paymentOptions: ['full', 'automatic'],
+      chargeAdvanceDays: 3,
+    });
+    expect(() => (service as never as { getRecurringConfiguration: Function }).getRecurringConfiguration(space, [1])).toThrow(BadRequestException);
+  });
+});

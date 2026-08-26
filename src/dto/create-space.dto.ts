@@ -52,6 +52,9 @@ export class SpaceSectorRecurringSettingDto {
   @Min(0)
   sectorIndex: number;
 
+  @IsBoolean()
+  enabled: boolean;
+
   @IsArray()
   @IsIn(['full', 'automatic'], { each: true })
   paymentOptions: Array<'full' | 'automatic'>;
@@ -166,6 +169,11 @@ export class CreateSpaceDto {
   @IsArray()
   @IsIn(['full', 'automatic'], { each: true })
   recurringPaymentOptions?: Array<'full' | 'automatic'>;
+
+  @ApiProperty({ example: true, description: 'Abilita gli acquisti ricorrenti della stanza intera', required: false })
+  @IsOptional()
+  @IsBoolean()
+  recurringEnabled?: boolean;
 
   @ApiProperty({ example: 7, description: 'Giorni di anticipo per gli addebiti automatici', required: false })
   @IsOptional()

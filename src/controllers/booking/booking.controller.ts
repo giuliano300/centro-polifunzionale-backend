@@ -6,7 +6,7 @@ import { RolesGuard } from "../../roles/roles.guard";
 import { BookingService } from "../../services/booking.service";
 import { AuthGuard } from "@nestjs/passport";
 import { FilterBookingsDto } from "src/filters/filter-bookings.dto";
-import { CreateRecurringBookingDto, RecurringAvailabilityQueryDto } from "src/dto/create-recurring-booking.dto";
+import { CreateRecurringBookingDto, RecurringAvailabilityBodyDto, RecurringAvailabilityQueryDto } from "src/dto/create-recurring-booking.dto";
 
 type PopulatedUserRef = string | { _id?: { toString(): string }; toString(): string };
 
@@ -73,6 +73,19 @@ export class BookingsController {
       workstationQuantity: Number(query.workstationQuantity || 1),
       sectorQuantity: Number(query.sectorQuantity || 0),
       sectorIndexes,
+    });
+  }
+
+  @Post('recurring-availability')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async recurringAvailabilityPreview(@Body() dto: RecurringAvailabilityBodyDto) {
+    return this.bookingsService.recurringAvailability({
+      ...dto,
+      rentalMode: dto.rentalMode || 'time',
+      workstationQuantity: Number(dto.workstationQuantity || 1),
+      sectorQuantity: Number(dto.sectorQuantity || 0),
+      sectorIndexes: dto.sectorIndexes || [],
     });
   }
 

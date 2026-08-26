@@ -160,15 +160,20 @@ export class BookingService {
     workstationQuantity: number;
     sectorQuantity: number;
     sectorIndexes: number[];
+    recurrenceSelections?: Array<{ date: string; startTime: string; endTime: string }>;
   }) {
     const space = await this.spaceModel.findById(input.spaceId).exec();
     if (!space) throw new NotFoundException('Spazio non trovato');
 
     const config = this.getRecurringConfiguration(space, input.sectorIndexes);
 
-    const dates = this.weeklyDates(input.startDate, input.endDate);
+    const schedule = this.recurringDates(input.startDate, input.endDate, input.recurrenceSelections?.length
+      ? input.recurrenceSelections
+      : [{ date: input.startDate, startTime: input.startTime, endTime: input.endTime }]);
     const occurrences: Array<{
       date: string;
+      startTime: string;
+      endTime: string;
       available: boolean;
       amount: number;
       reason: string;
@@ -176,7 +181,8 @@ export class BookingService {
       previousDay: { date: string; slots: Array<{ startTime: string; endTime: string; amount: number; available: boolean }> };
       nextDay: { date: string; slots: Array<{ startTime: string; endTime: string; amount: number; available: boolean }> };
     }> = [];
-    for (const date of dates) {
+    for (const scheduled of schedule) {
+      const { date, startTime, endTime } = scheduled;
       const availability = await this.availability(
         input.spaceId,
         date,
@@ -188,12 +194,12 @@ export class BookingService {
       const slots = availability.slots || [];
       const selectedSlots = input.rentalMode === 'full_day'
         ? slots.slice(0, 1)
-        : slots.filter((slot) => slot.startTime >= input.startTime && slot.endTime <= input.endTime);
+        : slots.filter((slot) => slot.startTime >= startTime && slot.endTime <= endTime);
       const exactRange = input.rentalMode === 'full_day'
         ? selectedSlots.length === 1
         : selectedSlots.length > 0
-          && selectedSlots[0].startTime === input.startTime
-          && selectedSlots[selectedSlots.length - 1].endTime === input.endTime;
+          && selectedSlots[0].startTime === startTime
+          && selectedSlots[selectedSlots.length - 1].endTime === endTime;
       const available = !!availability.isOpen && exactRange && selectedSlots.every((slot) => slot.available);
 
       const previousDate = this.shiftDate(date, -1);
@@ -204,8 +210,8 @@ export class BookingService {
       ]);
 
       const slotMinutes = Math.max(Number(space.timeSlotMinutes || 60), 1);
-      const requestedStart = this.timeToMinutes(input.startTime);
-      const requestedEndValue = this.timeToMinutes(input.endTime);
+      const requestedStart = this.timeToMinutes(startTime);
+      const requestedEndValue = this.timeToMinutes(endTime);
       const requestedEnd = requestedEndValue <= requestedStart ? requestedEndValue + 1440 : requestedEndValue;
       const requestedDuration = requestedEnd - requestedStart;
       const requiredSlotCount = input.rentalMode === 'full_day'
@@ -232,7 +238,7 @@ export class BookingService {
 
           const startTime = range[0].startTime;
           const endTime = range[range.length - 1].endTime;
-          if (excludeOriginalRange && startTime === input.startTime && endTime === input.endTime) continue;
+          if (excludeOriginalRange && startTime === scheduled.startTime && endTime === scheduled.endTime) continue;
 
           ranges.push({
             startTime,
@@ -254,10 +260,14 @@ export class BookingService {
 
       occurrences.push({
         date,
+        startTime,
+        endTime,
         available,
         amount: available ? this.calculateAmount(space, {
           ...input,
           date,
+          startTime,
+          endTime,
           name: 'Prenotazione ricorrente',
           rentalMode: input.rentalMode as 'time' | 'full_day',
           rentalUnit: space.rentalUnit,
@@ -292,6 +302,7 @@ export class BookingService {
       workstationQuantity: dto.workstationQuantity || 1,
       sectorQuantity: dto.sectorQuantity || sectorIndexes.length,
       sectorIndexes,
+      recurrenceSelections: dto.recurrenceSelections,
     });
     if (!preview.paymentOptions.includes(dto.paymentPlan)) {
       throw new BadRequestException('Modalità di pagamento ricorrente non consentita');
@@ -318,8 +329,8 @@ export class BookingService {
       .filter((item) => item.available && !excluded.has(item.date))
       .map((item) => ({
         date: item.date,
-        startTime: dto.startTime,
-        endTime: dto.endTime,
+        startTime: item.startTime,
+        endTime: item.endTime,
         amount: item.amount,
       }));
 
@@ -915,6 +926,9 @@ export class BookingService {
     const selected = [...new Set((sectorIndexes || []).filter((index) => index >= 0 && index < capacity))];
     const usesWholeRoom = !space.sectorEnabled || !selected.length || selected.length >= capacity;
     if (usesWholeRoom) {
+      if (!space.recurringEnabled) {
+        throw new BadRequestException('Gli acquisti ricorrenti non sono abilitati per la stanza intera');
+      }
       return {
         paymentOptions: space.recurringPaymentOptions?.length ? space.recurringPaymentOptions : ['full'],
         chargeAdvanceDays: Math.max(Number(space.recurringChargeAdvanceDays || 7), 1),
@@ -922,6 +936,9 @@ export class BookingService {
     }
 
     const settings = selected.map((sectorIndex) => space.sectorRecurringSettings?.find((item) => item.sectorIndex === sectorIndex));
+    if (settings.some((setting) => !setting?.enabled)) {
+      throw new BadRequestException('Gli acquisti ricorrenti non sono abilitati per tutte le aree selezionate');
+    }
     const paymentOptions = ['full', 'automatic'].filter((option) =>
       settings.every((setting) => (setting?.paymentOptions || ['full']).includes(option as 'full' | 'automatic')),
     );
@@ -929,6 +946,43 @@ export class BookingService {
       paymentOptions,
       chargeAdvanceDays: Math.max(...settings.map((setting) => Number(setting?.chargeAdvanceDays || 7)), 1),
     };
+  }
+
+  private recurringDates(
+    startValue: string,
+    endValue: string,
+    selections: Array<{ date: string; startTime: string; endTime: string }>,
+  ): Array<{ date: string; startTime: string; endTime: string }> {
+    const start = new Date(`${startValue}T12:00:00`);
+    const end = new Date(`${endValue}T12:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      throw new BadRequestException('Intervallo ricorrente non valido');
+    }
+    if (!selections.length || selections.length > 7) {
+      throw new BadRequestException('Seleziona da 1 a 7 giorni per settimana');
+    }
+
+    const patterns = selections.map((selection) => {
+      const selectedDate = new Date(`${selection.date}T12:00:00`);
+      if (Number.isNaN(selectedDate.getTime()) || !selection.startTime || !selection.endTime) {
+        throw new BadRequestException('Uno degli appuntamenti ricorrenti non è valido');
+      }
+      return { weekday: selectedDate.getDay(), startTime: selection.startTime, endTime: selection.endTime };
+    });
+    if (new Set(patterns.map((pattern) => pattern.weekday)).size !== patterns.length) {
+      throw new BadRequestException('Ogni giorno della settimana può essere selezionato una sola volta');
+    }
+
+    const result: Array<{ date: string; startTime: string; endTime: string }> = [];
+    const cursor = new Date(start);
+    while (cursor <= end && result.length < 364) {
+      const pattern = patterns.find((item) => item.weekday === cursor.getDay());
+      if (pattern) result.push({ date: this.localDateKey(cursor), startTime: pattern.startTime, endTime: pattern.endTime });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    if (cursor <= end) throw new BadRequestException('Puoi acquistare al massimo 364 appuntamenti ricorrenti');
+    if (!result.length) throw new BadRequestException('Nessun appuntamento ricorrente nel periodo selezionato');
+    return result;
   }
 
   private weeklyDates(startValue: string, endValue: string): string[] {
