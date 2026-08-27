@@ -7,4 +7,5 @@ export class FilterCourseBookingDto {
   @IsOptional() @IsString() paymentStatus?: string;
   @IsOptional() @IsString() start?: string;
   @IsOptional() @IsString() end?: string;
+  @IsOptional() @IsString() scope?: 'mine';
 }

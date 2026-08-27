@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Headers, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { CreateBookingDto } from "../../dto/create-booking.dto";
 import { UpdateBookingDto } from "../../dto/update-booking.dto";
 import { Roles, UserRole } from "../../roles/roles.decorator";
@@ -6,6 +6,7 @@ import { RolesGuard } from "../../roles/roles.guard";
 import { BookingService } from "../../services/booking.service";
 import { AuthGuard } from "@nestjs/passport";
 import { FilterBookingsDto } from "src/filters/filter-bookings.dto";
+import { CreateRecurringBookingDto, RecurringAvailabilityBodyDto, RecurringAvailabilityQueryDto } from "src/dto/create-recurring-booking.dto";
 
 type PopulatedUserRef = string | { _id?: { toString(): string }; toString(): string };
 
@@ -16,12 +17,20 @@ export class BookingsController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
-  async create(@Body() dto: CreateBookingDto, @Req() req) {
+  async create(@Body() dto: CreateBookingDto, @Req() req, @Headers('idempotency-key') idempotencyKey?: string) {
     const targetDto = {
       ...dto,
       userId: req.user.role === UserRole.Cliente ? req.user.userId : dto.userId,
     };
-    return this.bookingsService.create(targetDto, req.user.userId);
+    return this.bookingsService.create(targetDto, req.user.userId, idempotencyKey);
+  }
+
+  @Post('recurring')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async createRecurring(@Body() dto: CreateRecurringBookingDto, @Req() req, @Headers('idempotency-key') idempotencyKey?: string) {
+    const targetDto = { ...dto, userId: dto.userId || req.user.userId };
+    return this.bookingsService.createRecurring(targetDto, req.user.userId, idempotencyKey);
   }
 
   @Get()
@@ -42,8 +51,42 @@ export class BookingsController {
     @Query('date') date: string,
     @Query('rentalMode') rentalMode?: string,
     @Query('workstationQuantity') workstationQuantity?: string,
+    @Query('sectorQuantity') sectorQuantity?: string,
+    @Query('sectorIndexes') sectorIndexes?: string,
   ) {
-    return this.bookingsService.availability(spaceId, date, rentalMode || 'time', Number(workstationQuantity || 1));
+    const parsedSectorIndexes = sectorIndexes
+      ? sectorIndexes.split(',').map((value) => Number(value)).filter((value) => Number.isInteger(value))
+      : [];
+    return this.bookingsService.availability(spaceId, date, rentalMode || 'time', Number(workstationQuantity || 1), Number(sectorQuantity || 0), parsedSectorIndexes);
+  }
+
+  @Get('recurring-availability')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async recurringAvailability(@Query() query: RecurringAvailabilityQueryDto) {
+    const sectorIndexes = query.sectorIndexes
+      ? query.sectorIndexes.split(',').map(Number).filter(Number.isInteger)
+      : [];
+    return this.bookingsService.recurringAvailability({
+      ...query,
+      rentalMode: query.rentalMode || 'time',
+      workstationQuantity: Number(query.workstationQuantity || 1),
+      sectorQuantity: Number(query.sectorQuantity || 0),
+      sectorIndexes,
+    });
+  }
+
+  @Post('recurring-availability')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore)
+  async recurringAvailabilityPreview(@Body() dto: RecurringAvailabilityBodyDto) {
+    return this.bookingsService.recurringAvailability({
+      ...dto,
+      rentalMode: dto.rentalMode || 'time',
+      workstationQuantity: Number(dto.workstationQuantity || 1),
+      sectorQuantity: Number(dto.sectorQuantity || 0),
+      sectorIndexes: dto.sectorIndexes || [],
+    });
   }
 
   @Get(':id')

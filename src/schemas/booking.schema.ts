@@ -32,10 +32,38 @@ export class Booking extends Document {
   @Prop({ default: 1, min: 1 })
   workstationQuantity: number;
 
-  @Prop({ default: 'pending', enum: ['pending', 'confirmed', 'cancellation_requested', 'cancelled'] })
-  status: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled';
+  @Prop({ default: 0, min: 0 })
+  sectorQuantity: number;
+
+  @Prop({ type: [Number], default: [] })
+  sectorIndexes: number[];
+
+  @Prop({ default: 'pending', enum: ['pending', 'confirmed', 'cancellation_requested', 'cancelled', 'expired'] })
+  status: 'pending' | 'confirmed' | 'cancellation_requested' | 'cancelled' | 'expired';
+
+  @Prop({ type: Date, index: true })
+  holdExpiresAt?: Date;
+
+  @Prop()
+  idempotencyKey?: string;
+
+  @Prop({ index: true })
+  seriesId?: string;
+
+  @Prop({ min: 0 })
+  seriesIndex?: number;
+
+  @Prop({ min: 1 })
+  seriesCount?: number;
+
+  @Prop({ enum: ['full', 'automatic'] })
+  seriesPaymentPlan?: 'full' | 'automatic';
+
+  @Prop({ min: 1, max: 90 })
+  recurringChargeAdvanceDays?: number;
 
 }
 
 export type BookingDocument = Booking & Document;
 export const BookingSchema = SchemaFactory.createForClass(Booking);
+BookingSchema.index({ user: 1, idempotencyKey: 1 }, { unique: true, sparse: true });

@@ -21,6 +21,15 @@ export class SpaceExceptionalClosure {
   reason?: string;
 }
 
+export type RecurringPaymentOption = 'full' | 'automatic';
+
+export class SpaceSectorRecurringSetting {
+  sectorIndex: number;
+  enabled: boolean;
+  paymentOptions: RecurringPaymentOption[];
+  chargeAdvanceDays: number;
+}
+
 @Schema()
 export class Space {
   @Prop({ required: true })
@@ -50,11 +59,52 @@ export class Space {
   @Prop({ default: 1, min: 1 })
   workstationCount: number;
 
+  @Prop({ default: false })
+  sectorEnabled: boolean;
+
+  @Prop({ default: 1, min: 1 })
+  sectorCount: number;
+
+  @Prop({ type: [String], default: [] })
+  sectorNames: string[];
+
+  @Prop({ default: '#dbeafe' })
+  calendarColor: string;
+
+  @Prop({ type: [String], default: [] })
+  sectorColors: string[];
+
+  @Prop({ default: 0, min: 0 })
+  sectorRate: number;
+
+  @Prop({ default: 0, min: 0 })
+  sectorDailyRate: number;
+
   @Prop({ default: 2, min: 0 })
   courseCreationAdvanceHours: number;
 
   @Prop({ type: [String], enum: PAYMENT_METHOD_VALUES, default: DEFAULT_PAYMENT_METHODS })
   paymentMethods: PaymentMethod[];
+
+  @Prop({ type: [String], enum: ['full', 'automatic'], default: ['full'] })
+  recurringPaymentOptions: RecurringPaymentOption[];
+
+  @Prop({ default: false })
+  recurringEnabled: boolean;
+
+  @Prop({ default: 7, min: 1, max: 90 })
+  recurringChargeAdvanceDays: number;
+
+  @Prop({
+    type: [{
+      sectorIndex: { type: Number, required: true, min: 0 },
+      enabled: { type: Boolean, default: false },
+      paymentOptions: { type: [String], enum: ['full', 'automatic'], default: ['full'] },
+      chargeAdvanceDays: { type: Number, default: 7, min: 1, max: 90 },
+    }],
+    default: [],
+  })
+  sectorRecurringSettings: SpaceSectorRecurringSetting[];
 
   @Prop({
     type: [{

@@ -47,6 +47,24 @@ export class SpaceExceptionalClosureDto {
   reason?: string;
 }
 
+export class SpaceSectorRecurringSettingDto {
+  @IsInt()
+  @Min(0)
+  sectorIndex: number;
+
+  @IsBoolean()
+  enabled: boolean;
+
+  @IsArray()
+  @IsIn(['full', 'automatic'], { each: true })
+  paymentOptions: Array<'full' | 'automatic'>;
+
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  chargeAdvanceDays: number;
+}
+
 export class CreateSpaceDto {
   @ApiProperty({ example: 'Sala Yoga', description: 'Nome dello spazio' })
   @IsString()
@@ -94,6 +112,46 @@ export class CreateSpaceDto {
   @Min(1)
   workstationCount?: number;
 
+  @ApiProperty({ example: true, description: 'Permette di vendere la stanza non coworking per aree', required: false })
+  @IsOptional()
+  @IsBoolean()
+  sectorEnabled?: boolean;
+
+  @ApiProperty({ example: 2, description: 'Numero aree acquistabili della stanza', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sectorCount?: number;
+
+  @ApiProperty({ example: 60, description: 'Prezzo per area e frazione oraria', required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sectorRate?: number;
+
+  @ApiProperty({ example: 180, description: 'Prezzo giornata per area', required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sectorDailyRate?: number;
+
+  @ApiProperty({ example: ['Lato finestra', 'Lato ingresso'], description: 'Nomi dei aree della stanza', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sectorNames?: string[];
+
+  @ApiProperty({ example: '#dbeafe', description: 'Colore calendario della stanza', required: false })
+  @IsOptional()
+  @IsString()
+  calendarColor?: string;
+
+  @ApiProperty({ example: ['#dbeafe', '#dcfce7'], description: 'Colori calendario dei aree', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sectorColors?: string[];
+
   @ApiProperty({ example: 2, description: 'Ore prima dell inizio prenotazione oltre cui non e piu possibile creare un corso', required: false })
   @IsOptional()
   @IsNumber()
@@ -105,6 +163,31 @@ export class CreateSpaceDto {
   @IsArray()
   @IsIn(PAYMENT_METHOD_VALUES, { each: true })
   paymentMethods?: PaymentMethod[];
+
+  @ApiProperty({ example: ['full', 'automatic'], required: false })
+  @IsOptional()
+  @IsArray()
+  @IsIn(['full', 'automatic'], { each: true })
+  recurringPaymentOptions?: Array<'full' | 'automatic'>;
+
+  @ApiProperty({ example: true, description: 'Abilita gli acquisti ricorrenti della stanza intera', required: false })
+  @IsOptional()
+  @IsBoolean()
+  recurringEnabled?: boolean;
+
+  @ApiProperty({ example: 7, description: 'Giorni di anticipo per gli addebiti automatici', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  recurringChargeAdvanceDays?: number;
+
+  @ApiProperty({ description: 'Configurazione ricorrenza specifica per ciascuna area', required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SpaceSectorRecurringSettingDto)
+  sectorRecurringSettings?: SpaceSectorRecurringSettingDto[];
 
   @ApiProperty({ description: 'Orari settimanali di apertura e chiusura', required: false })
   @IsOptional()

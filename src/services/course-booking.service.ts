@@ -10,6 +10,7 @@ import { NotificationsService } from './notifications.service';
 import { WalletService } from './wallet.service';
 import { DiscountCodeService } from './discount-code.service';
 import { DEFAULT_PAYMENT_METHODS, PaymentMethod } from 'src/payments/payment-method.enum';
+import { SystemSettingsService } from './system-settings.service';
 
 type PopulatedCourseBooking = CourseBooking & {
   course?: {
@@ -30,10 +31,17 @@ export class CourseBookingsService {
     private notificationsService: NotificationsService,
     private walletService: WalletService,
     private discountCodeService: DiscountCodeService,
+    private systemSettingsService: SystemSettingsService,
   ) {}
 
-  async create(dto: CreateCourseBookingDto, userId: string): Promise<CourseBooking> {
+  async create(dto: CreateCourseBookingDto, userId: string, idempotencyKey?: string): Promise<CourseBooking> {
     const targetUserId = dto.userId || userId;
+    await this.expirePendingCourseBookings();
+    const normalizedKey = idempotencyKey?.trim().slice(0, 200);
+    if (normalizedKey) {
+      const replay = await this.courseBookingModel.findOne({ user: new Types.ObjectId(targetUserId), idempotencyKey: normalizedKey }).exec();
+      if (replay) return replay;
+    }
     const course = await this.courseModel.findById(dto.courseId)
       .populate({ path: 'booking', populate: { path: 'space' } })
       .exec();
@@ -56,16 +64,20 @@ export class CourseBookingsService {
     const existing = await this.courseBookingModel.findOne({
       course: new Types.ObjectId(dto.courseId),
       user: new Types.ObjectId(targetUserId),
-      status: { $ne: 'cancelled' },
+      $or: [
+        { status: 'confirmed' },
+        { status: 'pending', holdExpiresAt: { $gt: new Date() } },
+      ],
     }).exec();
 
-    if (existing) {
-      throw new BadRequestException('Utente già iscritto al corso');
-    }
+    if (existing) return existing;
 
     const bookedSeats = await this.courseBookingModel.countDocuments({
       course: new Types.ObjectId(dto.courseId),
-      status: 'confirmed',
+      $or: [
+        { status: 'confirmed' },
+        { status: 'pending', holdExpiresAt: { $gt: new Date() } },
+      ],
     }).exec();
 
     if (bookedSeats >= course.capacity) {
@@ -84,49 +96,56 @@ export class CourseBookingsService {
       monthlyPurchaseCount,
     });
     const totalAmount = Math.max(originalAmount - discount.amount, 0);
-    const walletBalance = totalAmount > 0 ? Math.max(await this.walletService.balance(targetUserId), 0) : 0;
-    const walletAmount = Math.min(walletBalance, totalAmount);
-    const externalAmount = Math.max(totalAmount - walletAmount, 0);
-    const isManualEnrollment = !!dto.userId && dto.userId !== userId;
-    const paymentMethod = externalAmount > 0 ? dto.paymentMethod || (isManualEnrollment ? PaymentMethod.Cash : undefined) : undefined;
-    if (externalAmount > 0 && !paymentMethod) {
-      throw new BadRequestException('Seleziona un metodo di pagamento');
-    }
-    if (paymentMethod) {
-      this.assertCoursePaymentMethodAllowed(spaceBooking?.space, paymentMethod);
-    }
-    const isExternalPaymentRegistered = paymentMethod === PaymentMethod.Cash;
+    const saved = await this.walletService.withUserWalletLock(targetUserId, async () => {
+      const walletBalance = totalAmount > 0 ? Math.max(await this.walletService.balance(targetUserId), 0) : 0;
+      const walletAmount = Math.min(walletBalance, totalAmount);
+      const externalAmount = Math.max(totalAmount - walletAmount, 0);
+      const isManualEnrollment = !!dto.userId && dto.userId !== userId;
+      const paymentMethod = externalAmount > 0 ? dto.paymentMethod || (isManualEnrollment ? PaymentMethod.Cash : undefined) : undefined;
+      if (externalAmount > 0 && !paymentMethod) {
+        throw new BadRequestException('Seleziona un metodo di pagamento');
+      }
+      if (paymentMethod) {
+        this.assertCoursePaymentMethodAllowed(spaceBooking?.space, paymentMethod);
+      }
+      const isExternalPaymentRegistered = paymentMethod === PaymentMethod.Cash;
+      const isConfirmed = course.enrollmentType === 'free' || externalAmount <= 0 || isExternalPaymentRegistered;
+      const holdMinutes = await this.systemSettingsService.bookingHoldMinutes();
 
-    const booking = new this.courseBookingModel({
-      user: new Types.ObjectId(targetUserId),
-      course: new Types.ObjectId(dto.courseId),
-      status: course.enrollmentType === 'free' || externalAmount <= 0 || isExternalPaymentRegistered ? 'confirmed' : 'pending',
-      enrollmentType: course.enrollmentType,
-      amount: externalAmount,
-      totalAmount,
-      walletAmount,
-      externalAmount,
-      originalAmount,
-      discountAmount: discount.amount,
-      discountCode: discount.code,
-      paymentMethod,
-      paymentStatus: course.enrollmentType === 'free' ? 'FREE' : externalAmount <= 0 || isExternalPaymentRegistered ? 'PAID' : 'PENDING',
-    });
-    const saved = await booking.save();
-    if (saved.status === 'confirmed') {
-      await this.courseModel.findByIdAndUpdate(dto.courseId, {
-        $addToSet: { participants: new Types.ObjectId(targetUserId) },
-      }).exec();
-    }
-    await this.discountCodeService.markUsed(discount.code);
-    if (walletAmount > 0) {
-      await this.walletService.debitCoursePayment(
-        targetUserId,
-        (saved as unknown as { _id: Types.ObjectId })._id.toString(),
+      const booking = new this.courseBookingModel({
+        user: new Types.ObjectId(targetUserId),
+        course: new Types.ObjectId(dto.courseId),
+        status: isConfirmed ? 'confirmed' : 'pending',
+        holdExpiresAt: isConfirmed ? undefined : new Date(Date.now() + holdMinutes * 60_000),
+        idempotencyKey: normalizedKey,
+        enrollmentType: course.enrollmentType,
+        amount: externalAmount,
+        totalAmount,
         walletAmount,
-        `Utilizzo wallet per iscrizione al corso ${course.title}`,
-      );
-    }
+        externalAmount,
+        originalAmount,
+        discountAmount: discount.amount,
+        discountCode: discount.code,
+        paymentMethod,
+        paymentStatus: course.enrollmentType === 'free' ? 'FREE' : externalAmount <= 0 || isExternalPaymentRegistered ? 'PAID' : 'PENDING',
+      });
+      const savedBooking = await booking.save();
+      if (savedBooking.status === 'confirmed') {
+        await this.courseModel.findByIdAndUpdate(dto.courseId, {
+          $addToSet: { participants: new Types.ObjectId(targetUserId) },
+        }).exec();
+      }
+      await this.discountCodeService.markUsed(discount.code);
+      if (walletAmount > 0) {
+        await this.walletService.debitCoursePayment(
+          targetUserId,
+          (savedBooking as unknown as { _id: Types.ObjectId })._id.toString(),
+          walletAmount,
+          `Utilizzo wallet per iscrizione al corso ${course.title}`,
+        );
+      }
+      return savedBooking;
+    });
     const populated = await this.courseBookingModel.findById((saved as unknown as { _id: Types.ObjectId })._id)
       .populate('user')
       .populate({
@@ -185,6 +204,7 @@ export class CourseBookingsService {
   }
 
   async findAll(filters: FilterCourseBookingDto & { managerId?: string }): Promise<CourseBooking[]> {
+    await this.expirePendingCourseBookings();
     const query: FilterQuery<CourseBooking> = {};
     if (filters.userId) query.user = new Types.ObjectId(filters.userId);
     if (filters.courseId) query.course = new Types.ObjectId(filters.courseId);
@@ -286,6 +306,9 @@ export class CourseBookingsService {
     if (courseBooking.paymentStatus !== 'PENDING') {
       throw new BadRequestException('Il metodo di pagamento può essere modificato solo sui pagamenti da completare');
     }
+    if (courseBooking.status === 'expired' || (courseBooking.holdExpiresAt && courseBooking.holdExpiresAt <= new Date())) {
+      throw new BadRequestException('Il tempo di priorità per il posto è scaduto');
+    }
 
     const populatedCourse = courseBooking.course as unknown as { booking?: { space?: { paymentMethods?: PaymentMethod[] } | string } };
     const space = populatedCourse?.booking?.space;
@@ -294,6 +317,7 @@ export class CourseBookingsService {
     if (paymentMethod === PaymentMethod.Cash) {
       courseBooking.status = 'confirmed';
       courseBooking.paymentStatus = 'PAID';
+      courseBooking.holdExpiresAt = undefined;
       await this.courseModel.findByIdAndUpdate(courseBooking.course, {
         $addToSet: { participants: new Types.ObjectId(courseBooking.user.toString()) },
       }).exec();
@@ -324,8 +348,28 @@ export class CourseBookingsService {
     return this.courseBookingModel.countDocuments({
       user: new Types.ObjectId(userId),
       createdAt: { $gte: start, $lt: end },
-      status: { $ne: 'cancelled' },
+      $or: [
+        { status: 'confirmed' },
+        { status: 'pending', holdExpiresAt: { $gt: new Date() } },
+      ],
     }).exec();
+  }
+
+  private async expirePendingCourseBookings(): Promise<void> {
+    const expired = await this.courseBookingModel.find({ status: 'pending', holdExpiresAt: { $lte: new Date() } }).exec();
+    for (const booking of expired) {
+      const bookingId = (booking._id as Types.ObjectId).toString();
+      const updated = await this.courseBookingModel.findOneAndUpdate(
+        { _id: booking._id, status: 'pending' },
+        { $set: { status: 'expired' } },
+        { new: true },
+      ).exec();
+      if (!updated) continue;
+      if ((booking.walletAmount || 0) > 0) {
+        await this.walletService.releaseCourseHold(booking.user.toString(), bookingId, booking.walletAmount);
+      }
+      await this.discountCodeService.releaseUsed(booking.discountCode);
+    }
   }
 
   private assertCoursePaymentMethodAllowed(space: unknown, method: PaymentMethod): void {

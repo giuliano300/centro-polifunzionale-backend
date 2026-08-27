@@ -12,7 +12,13 @@ export class CourseBooking extends Document {
   course: string;
 
   @Prop({ default: 'pending' })
-  status: 'pending' | 'confirmed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'cancelled' | 'expired';
+
+  @Prop({ type: Date, index: true })
+  holdExpiresAt?: Date;
+
+  @Prop()
+  idempotencyKey?: string;
 
   @Prop({ required: true, enum: ['paid', 'free'], default: 'free' })
   enrollmentType: 'paid' | 'free';
@@ -46,3 +52,4 @@ export class CourseBooking extends Document {
 
 }
 export const CourseBookingSchema = SchemaFactory.createForClass(CourseBooking);
+CourseBookingSchema.index({ user: 1, idempotencyKey: 1 }, { unique: true, sparse: true });

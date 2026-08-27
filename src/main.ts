@@ -6,7 +6,7 @@ import * as express from 'express';
 import { join } from 'path';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   const allowedOrigins = process.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim());
 
@@ -15,8 +15,8 @@ async function bootstrap() {
   });
 
   const config = new DocumentBuilder()
-    .setTitle('Centro Polifunzionale API')
-    .setDescription('API per la gestione del centro polifunzionale')
+    .setTitle("NAgorà API")
+    .setDescription("API per la gestione di NAgorà")
     .setVersion('1.0')
     .addBearerAuth(
     {

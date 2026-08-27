@@ -55,6 +55,7 @@ describe('BookingsController', () => {
     expect(bookingsService.create).toHaveBeenCalledWith(
       { userId: 'client-1', spaceId: 'space-1' },
       'client-1',
+      undefined,
     );
   });
 

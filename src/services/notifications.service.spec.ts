@@ -24,7 +24,7 @@ describe('NotificationsService', () => {
     notificationModel.deleteMany.mockReturnValue({
       exec: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     });
-    service = new NotificationsService(notificationModel as any, gateway as any);
+    service = new NotificationsService(notificationModel as any, gateway as any, {} as any);
   });
 
   it('emits admin notifications to the admin room', async () => {

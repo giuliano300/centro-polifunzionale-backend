@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { CreatePaymentDto } from "../../dto/create-payment.dto";
 import { ConfirmPaymentDto } from "../../dto/confirm-payment.dto";
 import { CreateCheckoutDto } from "../../dto/create-checkout.dto";
@@ -10,6 +10,11 @@ import { RolesGuard } from "src/roles/roles.guard";
 @Controller('payments')
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
+
+  @Post('webhooks/stripe')
+  async stripeWebhook(@Req() req, @Headers('stripe-signature') signature?: string) {
+    return this.paymentService.handleStripeWebhook(req.rawBody, signature || '');
+  }
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -64,6 +69,21 @@ export class PaymentController {
         successUrl: dto.successUrl,
         cancelUrl: dto.cancelUrl,
       },
+      req.user.role === UserRole.Admin ? undefined : req.user.userId,
+    );
+  }
+
+  @Post('booking/:bookingId/stripe-complete')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Gestore, UserRole.Cliente)
+  async completeStripeCheckout(
+    @Param('bookingId') bookingId: string,
+    @Body() dto: { sessionId: string },
+    @Req() req,
+  ) {
+    return this.paymentService.completeStripeCheckout(
+      bookingId,
+      dto.sessionId,
       req.user.role === UserRole.Admin ? undefined : req.user.userId,
     );
   }

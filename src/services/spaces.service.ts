@@ -35,14 +35,15 @@ export class SpacesService {
   }
   // CREA NUOVO SPAZIO
   async create(createSpaceDto: CreateSpaceDto): Promise<Space> {
-    const createdSpace = new this.spaceModel(createSpaceDto);
+    const createdSpace = new this.spaceModel(this.normalizeCalendarColors(createSpaceDto));
     return createdSpace.save();
   }
 
   // AGGIORNA SPAZIO ESISTENTE
   async update(id: string, updateSpaceDto: UpdateSpaceDto): Promise<Space> {
+    const normalizedDto = this.normalizeCalendarColors(updateSpaceDto);
     const updatedSpace = await this.spaceModel
-      .findByIdAndUpdate(id, updateSpaceDto, { new: true })
+      .findByIdAndUpdate(id, { $set: normalizedDto }, { new: true, runValidators: true })
       .exec();
 
     if (!updatedSpace) {
@@ -58,5 +59,31 @@ export class SpacesService {
       throw new NotFoundException(`Space #${id} not found`);
     }
     return { deleted: true };
+  }
+
+  private normalizeCalendarColors<T extends CreateSpaceDto | UpdateSpaceDto>(dto: T): T {
+    const normalized = { ...dto } as T & { calendarColor?: string; sectorColors?: string[]; sectorCount?: number; sectorEnabled?: boolean };
+    normalized.calendarColor = this.normalizeColor(normalized.calendarColor, '#f3f4f6');
+
+    if (normalized.sectorEnabled) {
+      const count = Math.max(Number(normalized.sectorCount || normalized.sectorColors?.length || 0), 0);
+      normalized.sectorColors = Array.from({ length: count }, (_, index) => (
+        this.normalizeColor(normalized.sectorColors?.[index], this.defaultSectorColor(index))
+      ));
+    } else if ('sectorColors' in normalized) {
+      normalized.sectorColors = [];
+    }
+
+    return normalized as T;
+  }
+
+  private normalizeColor(value: unknown, fallback: string): string {
+    const color = String(value || '').trim();
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color : fallback;
+  }
+
+  private defaultSectorColor(index: number): string {
+    const colors = ['#f3f4f6', '#e5e7eb', '#eef2ff', '#ecfeff', '#f0fdf4', '#fff7ed'];
+    return colors[index % colors.length];
   }
 }

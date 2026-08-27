@@ -12,6 +12,9 @@ import { User, UserDocument } from 'src/schemas/user.schema';
 import { WalletService } from './wallet.service';
 import { NotificationsService } from './notifications.service';
 import { DiscountCodeService } from './discount-code.service';
+import { SystemSettingsService } from './system-settings.service';
+import { randomUUID } from 'crypto';
+import { CreateRecurringBookingDto } from '../dto/create-recurring-booking.dto';
 
 type SearchableBooking = BookingDocument & {
   user?: {
@@ -42,9 +45,30 @@ export class BookingService {
     private walletService: WalletService,
     private notificationsService: NotificationsService,
     private discountCodeService: DiscountCodeService,
+    private systemSettingsService: SystemSettingsService,
   ) {}
 
-  async create(createBookingDto: CreateBookingDto, userId: string): Promise<Booking> {
+  async create(createBookingDto: CreateBookingDto, userId: string, idempotencyKey?: string, options: { useWallet?: boolean } = {}): Promise<Booking> {
+    const targetUserId = createBookingDto.userId || userId;
+    await this.expirePendingBookings();
+    const normalizedKey = idempotencyKey?.trim().slice(0, 200);
+    if (normalizedKey) {
+      const replay = await this.bookingModel.findOne({ user: new Types.ObjectId(targetUserId), idempotencyKey: normalizedKey }).exec();
+      if (replay) return replay;
+    }
+
+    const semanticDay = this.bookingDayRange(createBookingDto.date);
+    const semanticReplay = await this.bookingModel.findOne({
+      user: new Types.ObjectId(targetUserId),
+      space: new Types.ObjectId(createBookingDto.spaceId),
+      date: { $gte: semanticDay.start, $lt: semanticDay.end },
+      startTime: createBookingDto.startTime,
+      endTime: createBookingDto.endTime,
+      status: { $in: ['pending', 'confirmed'] },
+      $or: [{ status: 'confirmed' }, { holdExpiresAt: { $gt: new Date() } }],
+    }).exec();
+    if (semanticReplay) return semanticReplay;
+
     const space = await this.spaceModel.findById(createBookingDto.spaceId).exec();
     if (!space) {
       throw new NotFoundException('Spazio non trovato');
@@ -52,7 +76,6 @@ export class BookingService {
 
     this.validateSpaceAvailability(space, createBookingDto);
     await this.validateBookingConflicts(space, createBookingDto);
-    const targetUserId = createBookingDto.userId || userId;
     const user = await this.userModel.findById(targetUserId).exec();
     const monthlyPurchaseCount = await this.monthlyBookingPurchaseCount(targetUserId, createBookingDto.date);
     const originalAmount = this.calculateAmount(space, createBookingDto);
@@ -66,6 +89,7 @@ export class BookingService {
     );
     const amount = Math.max(originalAmount - discount.amount, 0);
 
+    const holdMinutes = await this.systemSettingsService.bookingHoldMinutes();
     const booking = new this.bookingModel({
       ...createBookingDto,
       user: new mongoose.Types.ObjectId(targetUserId),
@@ -73,40 +97,47 @@ export class BookingService {
       rentalUnit: createBookingDto.rentalUnit || space.rentalUnit || 'whole_room',
       rentalMode: createBookingDto.rentalMode || 'time',
       workstationQuantity: createBookingDto.workstationQuantity || 1,
+      sectorQuantity: this.getSectorQuantity(space, createBookingDto),
+      sectorIndexes: this.getSectorIndexes(space, createBookingDto),
+      holdExpiresAt: new Date(Date.now() + holdMinutes * 60_000),
+      idempotencyKey: normalizedKey,
     });
     const savedBooking = await booking.save();
 
-    const walletBalance = Math.max(await this.walletService.balance(targetUserId), 0);
-    const walletAmount = Math.min(walletBalance, amount);
-    const externalAmount = Math.max(amount - walletAmount, 0);
+    await this.walletService.withUserWalletLock(targetUserId, async () => {
+      const walletBalance = options.useWallet === false ? 0 : Math.max(await this.walletService.balance(targetUserId), 0);
+      const walletAmount = Math.min(walletBalance, amount);
+      const externalAmount = Math.max(amount - walletAmount, 0);
 
-    if (walletAmount > 0) {
-      await this.walletService.debitBookingPayment(
-        targetUserId,
-        (savedBooking._id as Types.ObjectId).toString(),
+      if (walletAmount > 0) {
+        await this.walletService.debitBookingPayment(
+          targetUserId,
+          (savedBooking._id as Types.ObjectId).toString(),
+          walletAmount,
+          `Utilizzo wallet per prenotazione ${savedBooking.name || savedBooking._id}`,
+        );
+      }
+
+      await this.paymentModel.create({
+        bookingId: savedBooking._id,
+        amount: externalAmount,
+        totalAmount: amount,
         walletAmount,
-        `Utilizzo wallet per prenotazione ${savedBooking.name || savedBooking._id}`,
-      );
-    }
-
-    await this.paymentModel.create({
-      bookingId: savedBooking._id,
-      amount: externalAmount,
-      totalAmount: amount,
-      walletAmount,
-      externalAmount,
-      originalAmount,
-      discountAmount: discount.amount,
-      discountCode: discount.code,
-      status: externalAmount <= 0 ? 'PAID' : 'PENDING',
-      method: externalAmount <= 0 ? 'wallet' : 'manual',
-      provider: 'manual',
-      transactionId: externalAmount <= 0 ? `WALLET-${Date.now()}` : undefined,
+        externalAmount,
+        originalAmount,
+        discountAmount: discount.amount,
+        discountCode: discount.code,
+        status: externalAmount <= 0 ? 'PAID' : 'PENDING',
+        method: externalAmount <= 0 ? 'wallet' : 'manual',
+        provider: 'manual',
+        transactionId: externalAmount <= 0 ? `WALLET-${Date.now()}` : undefined,
+      });
+      if (externalAmount <= 0) {
+        savedBooking.status = 'confirmed';
+        savedBooking.holdExpiresAt = undefined;
+        await savedBooking.save();
+      }
     });
-    if (externalAmount <= 0) {
-      savedBooking.status = 'confirmed';
-      await savedBooking.save();
-    }
     await this.discountCodeService.markUsed(discount.code);
     const manager = await this.userModel.findById(targetUserId).exec();
     await this.notificationsService.create({
@@ -119,7 +150,297 @@ export class BookingService {
     return savedBooking;
   }
 
-  async availability(spaceId: string, date: string, rentalMode = 'time', workstationQuantity = 1) {
+  async recurringAvailability(input: {
+    spaceId: string;
+    startDate: string;
+    endDate: string;
+    startTime: string;
+    endTime: string;
+    rentalMode: string;
+    workstationQuantity: number;
+    sectorQuantity: number;
+    sectorIndexes: number[];
+    recurrenceSelections?: Array<{ date: string; startTime: string; endTime: string }>;
+  }) {
+    const space = await this.spaceModel.findById(input.spaceId).exec();
+    if (!space) throw new NotFoundException('Spazio non trovato');
+
+    const config = this.getRecurringConfiguration(space, input.sectorIndexes);
+
+    const schedule = this.recurringDates(input.startDate, input.endDate, input.recurrenceSelections?.length
+      ? input.recurrenceSelections
+      : [{ date: input.startDate, startTime: input.startTime, endTime: input.endTime }]);
+    const occurrences: Array<{
+      date: string;
+      startTime: string;
+      endTime: string;
+      available: boolean;
+      amount: number;
+      reason: string;
+      sameDayAlternatives: Array<{ startTime: string; endTime: string; amount: number; available: boolean }>;
+      previousDay: { date: string; slots: Array<{ startTime: string; endTime: string; amount: number; available: boolean }> };
+      nextDay: { date: string; slots: Array<{ startTime: string; endTime: string; amount: number; available: boolean }> };
+    }> = [];
+    for (const scheduled of schedule) {
+      const { date, startTime, endTime } = scheduled;
+      const availability = await this.availability(
+        input.spaceId,
+        date,
+        input.rentalMode,
+        input.workstationQuantity,
+        input.sectorQuantity,
+        input.sectorIndexes,
+      );
+      const slots = availability.slots || [];
+      const selectedSlots = input.rentalMode === 'full_day'
+        ? slots.slice(0, 1)
+        : slots.filter((slot) => slot.startTime >= startTime && slot.endTime <= endTime);
+      const exactRange = input.rentalMode === 'full_day'
+        ? selectedSlots.length === 1
+        : selectedSlots.length > 0
+          && selectedSlots[0].startTime === startTime
+          && selectedSlots[selectedSlots.length - 1].endTime === endTime;
+      const available = !!availability.isOpen && exactRange && selectedSlots.every((slot) => slot.available);
+
+      const previousDate = this.shiftDate(date, -1);
+      const nextDate = this.shiftDate(date, 1);
+      const [previous, next] = await Promise.all([
+        this.availability(input.spaceId, previousDate, input.rentalMode, input.workstationQuantity, input.sectorQuantity, input.sectorIndexes),
+        this.availability(input.spaceId, nextDate, input.rentalMode, input.workstationQuantity, input.sectorQuantity, input.sectorIndexes),
+      ]);
+
+      const slotMinutes = Math.max(Number(space.timeSlotMinutes || 60), 1);
+      const requestedStart = this.timeToMinutes(startTime);
+      const requestedEndValue = this.timeToMinutes(endTime);
+      const requestedEnd = requestedEndValue <= requestedStart ? requestedEndValue + 1440 : requestedEndValue;
+      const requestedDuration = requestedEnd - requestedStart;
+      const requiredSlotCount = input.rentalMode === 'full_day'
+        ? 1
+        : Math.max(Math.round(requestedDuration / slotMinutes), 1);
+      const hasValidSlotDuration = input.rentalMode === 'full_day' || requestedDuration % slotMinutes === 0;
+      const buildAlternativeRanges = (
+        candidateDate: string,
+        candidateSlots: Array<{ startTime: string; endTime: string; amount: number; available: boolean }>,
+        excludeOriginalRange = false,
+      ) => {
+        if (!hasValidSlotDuration) return [];
+        if (input.rentalMode === 'full_day') {
+          return candidateSlots.filter((slot) => slot.available).slice(0, 1);
+        }
+
+        const ranges: Array<{ startTime: string; endTime: string; amount: number; available: boolean }> = [];
+        for (let index = 0; index + requiredSlotCount <= candidateSlots.length; index += 1) {
+          const range = candidateSlots.slice(index, index + requiredSlotCount);
+          const consecutive = range.every((slot, rangeIndex) =>
+            slot.available && (rangeIndex === 0 || range[rangeIndex - 1].endTime === slot.startTime)
+          );
+          if (!consecutive) continue;
+
+          const startTime = range[0].startTime;
+          const endTime = range[range.length - 1].endTime;
+          if (excludeOriginalRange && startTime === scheduled.startTime && endTime === scheduled.endTime) continue;
+
+          ranges.push({
+            startTime,
+            endTime,
+            amount: this.calculateAmount(space, {
+              ...input,
+              date: candidateDate,
+              startTime,
+              endTime,
+              name: 'Alternativa prenotazione ricorrente',
+              rentalMode: 'time',
+              rentalUnit: space.rentalUnit,
+            }),
+            available: true,
+          });
+        }
+        return ranges;
+      };
+
+      occurrences.push({
+        date,
+        startTime,
+        endTime,
+        available,
+        amount: available ? this.calculateAmount(space, {
+          ...input,
+          date,
+          startTime,
+          endTime,
+          name: 'Prenotazione ricorrente',
+          rentalMode: input.rentalMode as 'time' | 'full_day',
+          rentalUnit: space.rentalUnit,
+        }) : 0,
+        reason: available ? '' : (availability.closureReason || 'Fascia già occupata o non disponibile'),
+        sameDayAlternatives: buildAlternativeRanges(date, slots, true),
+        previousDay: { date: previousDate, slots: buildAlternativeRanges(previousDate, previous.slots) },
+        nextDay: { date: nextDate, slots: buildAlternativeRanges(nextDate, next.slots) },
+      });
+    }
+
+    return {
+      spaceId: input.spaceId,
+      paymentOptions: config.paymentOptions,
+      chargeAdvanceDays: config.chargeAdvanceDays,
+      occurrences,
+      availableCount: occurrences.filter((item) => item.available).length,
+      totalAmount: occurrences.reduce((total, item) => total + item.amount, 0),
+    };
+  }
+
+  async createRecurring(dto: CreateRecurringBookingDto, userId: string, idempotencyKey?: string) {
+    const targetUserId = dto.userId || userId;
+    const sectorIndexes = dto.sectorIndexes || [];
+    const preview = await this.recurringAvailability({
+      spaceId: dto.spaceId,
+      startDate: dto.date,
+      endDate: dto.endDate,
+      startTime: dto.startTime,
+      endTime: dto.endTime,
+      rentalMode: dto.rentalMode || 'time',
+      workstationQuantity: dto.workstationQuantity || 1,
+      sectorQuantity: dto.sectorQuantity || sectorIndexes.length,
+      sectorIndexes,
+      recurrenceSelections: dto.recurrenceSelections,
+    });
+    if (!preview.paymentOptions.includes(dto.paymentPlan)) {
+      throw new BadRequestException('Modalità di pagamento ricorrente non consentita');
+    }
+    const space = await this.spaceModel.findById(dto.spaceId).exec();
+    if (dto.paymentPlan === 'automatic' && !space?.paymentMethods?.some((method) => method === 'stripe')) {
+      throw new BadRequestException('Gli addebiti automatici richiedono Stripe tra i metodi della stanza');
+    }
+
+    const excluded = new Set(dto.excludedDates || []);
+    const replacements = dto.replacements || [];
+    const replacementOriginalDates = new Set(replacements.map((item) => item.originalDate));
+    if (replacementOriginalDates.size !== replacements.length) {
+      throw new BadRequestException('Ogni data non disponibile può essere sostituita una sola volta');
+    }
+
+    const purchasable: Array<{
+      date: string;
+      startTime: string;
+      endTime: string;
+      amount: number;
+      originalDate?: string;
+    }> = preview.occurrences
+      .filter((item) => item.available && !excluded.has(item.date))
+      .map((item) => ({
+        date: item.date,
+        startTime: item.startTime,
+        endTime: item.endTime,
+        amount: item.amount,
+      }));
+
+    for (const replacement of replacements) {
+      const original = preview.occurrences.find((item) => item.date === replacement.originalDate);
+      if (!original || original.available) {
+        throw new BadRequestException(`La data ${replacement.originalDate} non può essere sostituita`);
+      }
+
+      const proposedSlots = replacement.date === original.date
+        ? original.sameDayAlternatives
+        : replacement.date === original.previousDay.date
+          ? original.previousDay.slots
+          : replacement.date === original.nextDay.date
+            ? original.nextDay.slots
+            : [];
+      const proposedSlot = proposedSlots.find((slot) =>
+        slot.available
+        && slot.startTime === replacement.startTime
+        && slot.endTime === replacement.endTime
+      );
+      if (!proposedSlot) {
+        throw new BadRequestException(`La sostituzione scelta per ${replacement.originalDate} non è disponibile`);
+      }
+
+      purchasable.push({
+        originalDate: replacement.originalDate,
+        date: replacement.date,
+        startTime: replacement.startTime,
+        endTime: replacement.endTime,
+        amount: proposedSlot.amount,
+      });
+    }
+
+    const uniqueSlots = new Set(purchasable.map((item) => `${item.date}|${item.startTime}|${item.endTime}`));
+    if (uniqueSlots.size !== purchasable.length) {
+      throw new BadRequestException('Due date della serie usano la stessa fascia sostitutiva');
+    }
+    purchasable.sort((left, right) => `${left.date} ${left.startTime}`.localeCompare(`${right.date} ${right.startTime}`));
+    if (!purchasable.length) throw new BadRequestException('Nessuna data disponibile nell’intervallo selezionato');
+
+    const seriesId = randomUUID();
+    const bookings: Booking[] = [];
+    const createdIds: unknown[] = [];
+    try {
+      for (let index = 0; index < purchasable.length; index += 1) {
+        const occurrence = purchasable[index];
+        const booking = await this.create({
+          ...dto,
+          date: occurrence.date,
+          startTime: occurrence.startTime,
+          endTime: occurrence.endTime,
+          discountCode: dto.discountCode,
+        }, targetUserId, idempotencyKey ? `${idempotencyKey}-${index}` : `${seriesId}-${index}`, { useWallet: false });
+        createdIds.push(booking._id);
+        const bookingId = (booking._id as Types.ObjectId).toString();
+        const updates: Record<string, unknown> = {
+          seriesId,
+          seriesIndex: index,
+          seriesCount: purchasable.length,
+          seriesPaymentPlan: dto.paymentPlan,
+          recurringChargeAdvanceDays: preview.chargeAdvanceDays,
+        };
+        if (dto.paymentPlan === 'automatic' && index > 0) {
+          updates.status = 'confirmed';
+          updates.$unset = { holdExpiresAt: 1 };
+        }
+        const unset = updates.$unset as Record<string, number> | undefined;
+        delete updates.$unset;
+        const saved = await this.bookingModel.findByIdAndUpdate(
+          bookingId,
+          unset ? { $set: updates, $unset: unset } : { $set: updates },
+          { new: true },
+        ).exec();
+        await this.paymentModel.updateMany({ bookingId: booking._id, status: 'PENDING' }, {
+          $set: {
+            seriesId,
+            automaticCharge: dto.paymentPlan === 'automatic' && index > 0,
+            dueDate: dto.paymentPlan === 'automatic' && index > 0
+              ? this.paymentDueDate(occurrence.date, preview.chargeAdvanceDays)
+              : new Date(),
+          },
+        }).exec();
+        if (saved) bookings.push(saved);
+      }
+    } catch (error) {
+      const createdPayments = await this.paymentModel.find({ bookingId: { $in: createdIds } }).select('discountCode').exec();
+      for (const code of [...new Set(createdPayments.map((payment) => payment.discountCode).filter(Boolean))]) {
+        await this.discountCodeService.releaseUsed(code);
+      }
+      await this.paymentModel.deleteMany({ bookingId: { $in: createdIds } }).exec();
+      await this.bookingModel.deleteMany({ _id: { $in: createdIds } }).exec();
+      throw error;
+    }
+
+    return {
+      seriesId,
+      paymentPlan: dto.paymentPlan,
+      chargeAdvanceDays: preview.chargeAdvanceDays,
+      bookings,
+      firstBooking: bookings[0],
+      skipped: preview.occurrences.filter((item) =>
+        (!item.available && !replacementOriginalDates.has(item.date)) || excluded.has(item.date)
+      ),
+      totalAmount: purchasable.reduce((total, item) => total + item.amount, 0),
+    };
+  }
+
+  async availability(spaceId: string, date: string, rentalMode = 'time', workstationQuantity = 1, sectorQuantity = 0, sectorIndexes: number[] = []) {
+    await this.expirePendingBookings();
     const space = await this.spaceModel.findById(spaceId).exec();
     if (!space) {
       throw new NotFoundException('Spazio non trovato');
@@ -157,6 +478,8 @@ export class BookingService {
         rentalMode: 'full_day' as const,
         rentalUnit: space.rentalUnit || 'whole_room',
         workstationQuantity,
+        sectorQuantity,
+        sectorIndexes,
       };
       const available = this.isStartBookableToday(space, dto, open, normalizedClose)
         && await this.isAvailableForDto(space, dto);
@@ -188,6 +511,8 @@ export class BookingService {
         rentalMode: 'time' as const,
         rentalUnit: space.rentalUnit || 'whole_room',
         workstationQuantity,
+        sectorQuantity,
+        sectorIndexes,
       };
       if (!this.isStartBookableToday(space, dto, open, normalizedClose)) {
         continue;
@@ -241,6 +566,13 @@ export class BookingService {
 
     if (rentalUnit === 'workstation' && (dto.workstationQuantity || 1) > (space.workstationCount || 1)) {
       throw new BadRequestException('Postazioni richieste superiori alle postazioni disponibili');
+    }
+
+    if (rentalUnit === 'whole_room') {
+      const sectorQuantity = this.getSectorQuantity(space, dto);
+      if (sectorQuantity > this.getSectorCapacity(space)) {
+        throw new BadRequestException('Aree richiesti superiori ai aree disponibili');
+      }
     }
 
     const slot = this.getOpeningSlot(space, dto.date);
@@ -322,11 +654,18 @@ export class BookingService {
     const requested = this.getNormalizedInterval(space, dto);
     const rentalUnit = dto.rentalUnit || space.rentalUnit || 'whole_room';
     const workstationQuantity = dto.workstationQuantity || 1;
+    const requestedSectorIndexes = this.getSectorIndexes(space, dto);
+    const requestedSectorQuantity = requestedSectorIndexes.length || this.getSectorQuantity(space, dto);
+    const sectorCapacity = this.getSectorCapacity(space);
 
+    const bookingDay = this.bookingDayRange(dto.date);
     const sameDayBookings = await this.bookingModel.find({
       space: new mongoose.Types.ObjectId(dto.spaceId),
-      date: new Date(dto.date),
-      status: { $ne: 'cancelled' },
+      date: { $gte: bookingDay.start, $lt: bookingDay.end },
+      $or: [
+        { status: { $in: ['confirmed', 'cancellation_requested'] } },
+        { status: 'pending', holdExpiresAt: { $gt: new Date() } },
+      ],
     }).exec();
 
     const overlapping = sameDayBookings.filter((booking) => {
@@ -342,13 +681,69 @@ export class BookingService {
       return;
     }
 
-    if (rentalUnit === 'whole_room' || overlapping.some((booking) => booking.rentalUnit === 'whole_room')) {
+    if (rentalUnit === 'whole_room') {
+      if (space.sectorEnabled && requestedSectorIndexes.length) {
+        const requestedAll = requestedSectorIndexes.length >= sectorCapacity;
+        const conflict = overlapping.some((booking) => {
+          const bookedIndexes = this.getBookedSectorIndexes(space, booking);
+          return requestedAll
+            || bookedIndexes.length >= sectorCapacity
+            || requestedSectorIndexes.some((index) => bookedIndexes.includes(index));
+        });
+        if (conflict) {
+          throw new BadRequestException('Aree non disponibili in questa fascia oraria');
+        }
+        return;
+      }
+
+      const usedSectors = overlapping.reduce((total, booking) => total + this.getBookedSectorQuantity(space, booking), 0);
+      if (usedSectors + requestedSectorQuantity > sectorCapacity) {
+        throw new BadRequestException('Aree non disponibili in questa fascia oraria');
+      }
+      return;
+    }
+
+    if (overlapping.some((booking) => booking.rentalUnit === 'whole_room')) {
       throw new BadRequestException('Lo spazio e gia prenotato in questa fascia oraria');
     }
 
     const usedWorkstations = overlapping.reduce((total, booking) => total + (booking.workstationQuantity || 1), 0);
     if (usedWorkstations + workstationQuantity > (space.workstationCount || 1)) {
       throw new BadRequestException('Postazioni non disponibili in questa fascia oraria');
+    }
+  }
+
+  private async expirePendingBookings(): Promise<void> {
+    const expired = await this.bookingModel.find({
+      status: 'pending',
+      holdExpiresAt: { $lte: new Date() },
+    }).exec();
+
+    for (const booking of expired) {
+      const bookingId = (booking._id as Types.ObjectId).toString();
+      const payment = await this.paymentModel.findOne({ bookingId: booking._id, status: 'PENDING' }).exec();
+      const updated = await this.bookingModel.findOneAndUpdate(
+        { _id: booking._id, status: 'pending' },
+        { $set: { status: 'expired' } },
+        { new: true },
+      ).exec();
+      if (!updated) continue;
+      if (booking.seriesId && booking.seriesPaymentPlan === 'automatic' && booking.seriesIndex === 0) {
+        const futureBookings = await this.bookingModel.find({ seriesId: booking.seriesId, seriesIndex: { $gt: 0 } }).select('_id').exec();
+        const futureIds = futureBookings.map((item) => item._id);
+        await this.bookingModel.updateMany({ _id: { $in: futureIds }, status: 'confirmed' }, { $set: { status: 'expired' } }).exec();
+        await this.paymentModel.updateMany({ bookingId: { $in: futureIds }, status: 'PENDING' }, {
+          $set: { status: 'FAILED', method: 'series_first_payment_expired', automaticCharge: false },
+        }).exec();
+      }
+      if ((payment?.walletAmount || 0) > 0) {
+        await this.walletService.releaseBookingHold(booking.user.toString(), bookingId, payment!.walletAmount);
+      }
+      await this.discountCodeService.releaseUsed(payment?.discountCode);
+      await this.paymentModel.updateMany(
+        { bookingId: booking._id, status: 'PENDING' },
+        { $set: { status: 'FAILED', method: 'hold_expired' } },
+      ).exec();
     }
   }
 
@@ -426,14 +821,92 @@ export class BookingService {
 
   private calculateAmount(space: SpaceDocument, dto: CreateBookingDto): number {
     if ((dto.rentalMode || 'time') === 'full_day') {
+      if ((dto.rentalUnit || space.rentalUnit) === 'whole_room') {
+        const sectorQuantity = this.getSectorQuantity(space, dto);
+        const sectorCapacity = this.getSectorCapacity(space);
+        if (space.sectorEnabled && sectorQuantity < sectorCapacity) {
+          return (space.sectorDailyRate || space.dailyRate || 0) * sectorQuantity;
+        }
+      }
       return space.dailyRate || 0;
     }
 
     const { start, end } = this.getNormalizedInterval(space, dto);
     const fraction = space.timeSlotMinutes || 60;
     const units = Math.ceil((end - start) / fraction);
-    const quantity = (dto.rentalUnit || space.rentalUnit) === 'workstation' ? (dto.workstationQuantity || 1) : 1;
-    return units * (space.hourlyRate || 0) * quantity;
+    if ((dto.rentalUnit || space.rentalUnit) === 'workstation') {
+      return units * (space.hourlyRate || 0) * (dto.workstationQuantity || 1);
+    }
+
+    const sectorQuantity = this.getSectorQuantity(space, dto);
+    const sectorCapacity = this.getSectorCapacity(space);
+    if (space.sectorEnabled && sectorQuantity < sectorCapacity) {
+      return units * (space.sectorRate || space.hourlyRate || 0) * sectorQuantity;
+    }
+
+    return units * (space.hourlyRate || 0);
+  }
+
+  private getSectorCapacity(space: SpaceDocument): number {
+    return space.rentalUnit === 'whole_room' && space.sectorEnabled
+      ? Math.max(Number(space.sectorCount || 1), 1)
+      : 1;
+  }
+
+  private getSectorQuantity(space: SpaceDocument, dto: Pick<CreateBookingDto, 'sectorQuantity'>): number {
+    if (space.rentalUnit !== 'whole_room' || !space.sectorEnabled) {
+      return 1;
+    }
+
+    return Math.max(Number(dto.sectorQuantity || space.sectorCount || 1), 1);
+  }
+
+  private getSectorIndexes(space: SpaceDocument, dto: Pick<CreateBookingDto, 'sectorIndexes' | 'sectorQuantity'>): number[] {
+    const capacity = this.getSectorCapacity(space);
+    if (space.rentalUnit !== 'whole_room' || !space.sectorEnabled || capacity <= 1) {
+      return [];
+    }
+
+    const raw = Array.isArray(dto.sectorIndexes) ? dto.sectorIndexes : [];
+    const indexes = [...new Set(raw.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value < capacity))];
+    if (indexes.length) {
+      return indexes.sort((a, b) => a - b);
+    }
+
+    const quantity = Math.min(this.getSectorQuantity(space, dto), capacity);
+    return Array.from({ length: quantity }, (_, index) => index);
+  }
+
+  private getBookedSectorQuantity(space: SpaceDocument, booking: Pick<BookingDocument, 'rentalUnit' | 'sectorQuantity' | 'sectorIndexes'>): number {
+    if (booking.rentalUnit !== 'whole_room') {
+      return 0;
+    }
+
+    if (!space.sectorEnabled) {
+      return 1;
+    }
+
+    return this.getBookedSectorIndexes(space, booking).length || Math.max(Number(booking.sectorQuantity || space.sectorCount || 1), 1);
+  }
+
+  private getBookedSectorIndexes(space: SpaceDocument, booking: Pick<BookingDocument, 'rentalUnit' | 'sectorQuantity' | 'sectorIndexes'>): number[] {
+    const capacity = this.getSectorCapacity(space);
+    if (booking.rentalUnit !== 'whole_room') {
+      return [];
+    }
+
+    if (!space.sectorEnabled) {
+      return [0];
+    }
+
+    const raw = Array.isArray(booking.sectorIndexes) ? booking.sectorIndexes : [];
+    const indexes = [...new Set(raw.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value < capacity))];
+    if (indexes.length) {
+      return indexes.sort((a, b) => a - b);
+    }
+
+    const quantity = Math.min(Math.max(Number(booking.sectorQuantity || space.sectorCount || 1), 1), capacity);
+    return Array.from({ length: quantity }, (_, index) => index);
   }
 
   private defaultOpeningHours() {
@@ -448,6 +921,118 @@ export class BookingService {
     ];
   }
 
+  private getRecurringConfiguration(space: SpaceDocument, sectorIndexes: number[]) {
+    const capacity = this.getSectorCapacity(space);
+    const selected = [...new Set((sectorIndexes || []).filter((index) => index >= 0 && index < capacity))];
+    const usesWholeRoom = !space.sectorEnabled || !selected.length || selected.length >= capacity;
+    if (usesWholeRoom) {
+      if (!space.recurringEnabled) {
+        throw new BadRequestException('Gli acquisti ricorrenti non sono abilitati per la stanza intera');
+      }
+      return {
+        paymentOptions: space.recurringPaymentOptions?.length ? space.recurringPaymentOptions : ['full'],
+        chargeAdvanceDays: Math.max(Number(space.recurringChargeAdvanceDays || 7), 1),
+      };
+    }
+
+    const settings = selected.map((sectorIndex) => space.sectorRecurringSettings?.find((item) => item.sectorIndex === sectorIndex));
+    if (settings.some((setting) => !setting?.enabled)) {
+      throw new BadRequestException('Gli acquisti ricorrenti non sono abilitati per tutte le aree selezionate');
+    }
+    const paymentOptions = ['full', 'automatic'].filter((option) =>
+      settings.every((setting) => (setting?.paymentOptions || ['full']).includes(option as 'full' | 'automatic')),
+    );
+    return {
+      paymentOptions,
+      chargeAdvanceDays: Math.max(...settings.map((setting) => Number(setting?.chargeAdvanceDays || 7)), 1),
+    };
+  }
+
+  private recurringDates(
+    startValue: string,
+    endValue: string,
+    selections: Array<{ date: string; startTime: string; endTime: string }>,
+  ): Array<{ date: string; startTime: string; endTime: string }> {
+    const start = new Date(`${startValue}T12:00:00`);
+    const end = new Date(`${endValue}T12:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      throw new BadRequestException('Intervallo ricorrente non valido');
+    }
+    if (!selections.length || selections.length > 7) {
+      throw new BadRequestException('Seleziona da 1 a 7 giorni per settimana');
+    }
+
+    const patterns = selections.map((selection) => {
+      const selectedDate = new Date(`${selection.date}T12:00:00`);
+      if (Number.isNaN(selectedDate.getTime()) || !selection.startTime || !selection.endTime) {
+        throw new BadRequestException('Uno degli appuntamenti ricorrenti non è valido');
+      }
+      return { weekday: selectedDate.getDay(), startTime: selection.startTime, endTime: selection.endTime };
+    });
+    if (new Set(patterns.map((pattern) => pattern.weekday)).size !== patterns.length) {
+      throw new BadRequestException('Ogni giorno della settimana può essere selezionato una sola volta');
+    }
+
+    const result: Array<{ date: string; startTime: string; endTime: string }> = [];
+    const cursor = new Date(start);
+    while (cursor <= end && result.length < 364) {
+      const pattern = patterns.find((item) => item.weekday === cursor.getDay());
+      if (pattern) result.push({ date: this.localDateKey(cursor), startTime: pattern.startTime, endTime: pattern.endTime });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    if (cursor <= end) throw new BadRequestException('Puoi acquistare al massimo 364 appuntamenti ricorrenti');
+    if (!result.length) throw new BadRequestException('Nessun appuntamento ricorrente nel periodo selezionato');
+    return result;
+  }
+
+  private weeklyDates(startValue: string, endValue: string): string[] {
+    const start = new Date(`${startValue}T12:00:00`);
+    const end = new Date(`${endValue}T12:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      throw new BadRequestException('Intervallo ricorrente non valido');
+    }
+    const dates: string[] = [];
+    const cursor = new Date(start);
+    while (cursor <= end && dates.length < 52) {
+      dates.push(this.localDateKey(cursor));
+      cursor.setDate(cursor.getDate() + 7);
+    }
+    if (cursor <= end) throw new BadRequestException('Puoi acquistare al massimo 52 ricorrenze');
+    return dates;
+  }
+
+  private shiftDate(value: string, days: number): string {
+    const date = new Date(`${value}T12:00:00`);
+    date.setDate(date.getDate() + days);
+    return this.localDateKey(date);
+  }
+
+  private localDateKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private bookingDayRange(value: string | Date): { start: Date; end: Date } {
+    const key = typeof value === 'string'
+      ? value.slice(0, 10)
+      : this.localDateKey(value);
+    const start = new Date(`${key}T00:00:00`);
+    if (Number.isNaN(start.getTime())) {
+      throw new BadRequestException('Data prenotazione non valida');
+    }
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
+  private paymentDueDate(value: string, advanceDays: number): Date {
+    const date = new Date(`${value}T09:00:00`);
+    date.setDate(date.getDate() - Math.max(advanceDays, 1));
+    return date;
+  }
+
   private async monthlyBookingPurchaseCount(userId: string, date: string | Date): Promise<number> {
     const target = new Date(date);
     const start = new Date(target.getFullYear(), target.getMonth(), 1);
@@ -460,6 +1045,7 @@ export class BookingService {
   }
 
   async findAll(filterDto: FilterBookingsDto): Promise<BookingWithPayments[] | PaginatedBookings> {
+    await this.expirePendingBookings();
     const { spaceId, userId, date, status, excludeStatus, start, end, search, page, limit } = filterDto;
 
     const query: FilterQuery<Booking> = {};
@@ -471,7 +1057,7 @@ export class BookingService {
     if (start || end) {
       query.date = {};
       if (start) query.date.$gte = new Date(start);
-      if (end) query.date.$lte = new Date(end);
+      if (end) query.date.$lt = new Date(end);
     }
 
     if (status) {

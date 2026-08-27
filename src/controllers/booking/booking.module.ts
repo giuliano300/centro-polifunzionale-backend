@@ -9,6 +9,7 @@ import { Payment, PaymentSchema } from "src/schemas/payment.schema";
 import { WalletModule } from "../wallet/wallet.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { DiscountCodesModule } from "../discount-codes/discount-codes.module";
+import { SystemSettingsModule } from "../system-settings/system-settings.module";
 
 
 @Module({
@@ -19,7 +20,8 @@ import { DiscountCodesModule } from "../discount-codes/discount-codes.module";
     MongooseModule.forFeature([{ name: Payment.name, schema: PaymentSchema }]),
     WalletModule,
     NotificationsModule,
-    DiscountCodesModule
+    DiscountCodesModule,
+    SystemSettingsModule
   ],
   controllers: [BookingsController],
   providers: [BookingService],

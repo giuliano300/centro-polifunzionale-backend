@@ -46,6 +46,7 @@ describe('CourseBookingsController', () => {
     expect(courseBookingsService.create).toHaveBeenCalledWith(
       { courseId: 'course-1', userId: 'client-1' },
       'client-1',
+      undefined,
     );
   });
 

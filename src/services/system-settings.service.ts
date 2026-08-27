@@ -14,18 +14,18 @@ export class SystemSettingsService {
   async getSettings(): Promise<SystemSettings> {
     return this.settingsModel.findOneAndUpdate(
       { key: SETTINGS_KEY },
-      { $setOnInsert: { key: SETTINGS_KEY, newUserWalletCredit: 0, newClientWalletCredit: 0, newManagerWalletCredit: 0 } },
+      { $setOnInsert: { key: SETTINGS_KEY, newUserWalletCredit: 0, newClientWalletCredit: 0, newManagerWalletCredit: 0, bookingHoldMinutes: 15 } },
       { new: true, upsert: true },
     ).exec();
   }
 
-  async updateSettings(dto: { newUserWalletCredit?: number; newClientWalletCredit?: number; newManagerWalletCredit?: number }): Promise<SystemSettings> {
+  async updateSettings(dto: { newUserWalletCredit?: number; newClientWalletCredit?: number; newManagerWalletCredit?: number; bookingHoldMinutes?: number }): Promise<SystemSettings> {
     const newUserWalletCredit = Math.max(Number(dto.newUserWalletCredit || 0), 0);
     const newClientWalletCredit = Math.max(Number(dto.newClientWalletCredit ?? newUserWalletCredit), 0);
     const newManagerWalletCredit = Math.max(Number(dto.newManagerWalletCredit ?? newUserWalletCredit), 0);
     return this.settingsModel.findOneAndUpdate(
       { key: SETTINGS_KEY },
-      { key: SETTINGS_KEY, newUserWalletCredit, newClientWalletCredit, newManagerWalletCredit },
+      { key: SETTINGS_KEY, newUserWalletCredit, newClientWalletCredit, newManagerWalletCredit, bookingHoldMinutes: Math.min(Math.max(Number(dto.bookingHoldMinutes ?? 15), 1), 120) },
       { new: true, upsert: true, runValidators: true },
     ).exec();
   }
@@ -39,5 +39,10 @@ export class SystemSettingsService {
       return Math.max(Number(settings.newManagerWalletCredit ?? (settings.newUserWalletCredit || 0)), 0);
     }
     return Math.max(Number(settings.newUserWalletCredit || 0), 0);
+  }
+
+  async bookingHoldMinutes(): Promise<number> {
+    const settings = await this.getSettings();
+    return Math.min(Math.max(Number(settings.bookingHoldMinutes || 15), 1), 120);
   }
 }

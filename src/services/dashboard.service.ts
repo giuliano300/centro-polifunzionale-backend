@@ -99,13 +99,13 @@ export class DashboardService {
       this.sumCourseWalletUsedByCourseDate(monthStart, nextMonthStart),
       this.courseBookingModel.countDocuments({ paymentStatus: 'PENDING' }).exec(),
       this.sumPayments({ status: 'PENDING' }),
-      this.userModel.find({ role: { $ne: UserRole.Admin } }).sort({ _id: -1 }).limit(6).select('-password').exec(),
-      this.bookingModel.find().sort({ _id: -1 }).limit(6).populate('user').populate('space').exec(),
-      this.courseModel.find().sort({ _id: -1 }).limit(6).populate({
+      this.userModel.find({ role: { $ne: UserRole.Admin } }).sort({ _id: -1 }).limit(5).select('-password').exec(),
+      this.bookingModel.find().sort({ _id: -1 }).limit(5).populate('user').populate('space').exec(),
+      this.courseModel.find().sort({ _id: -1 }).limit(5).populate({
         path: 'booking',
         populate: [{ path: 'user' }, { path: 'space' }],
       }).exec(),
-      this.courseBookingModel.find().sort({ _id: -1 }).limit(6).populate('user').populate({
+      this.courseBookingModel.find().sort({ _id: -1 }).limit(5).populate('user').populate({
         path: 'course',
         populate: {
           path: 'booking',

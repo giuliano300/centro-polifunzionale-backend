@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
 
 export class RequestManagerRegistrationOtpDto {
   @ApiProperty({ example: 'Mario Rossi' })
@@ -25,6 +25,11 @@ export class RequestManagerRegistrationOtpDto {
   @IsString()
   @MinLength(6)
   password: string;
+
+  @ApiProperty({ example: true, description: 'Conferma di presa visione dell’informativa e accettazione del trattamento necessario alla registrazione' })
+  @IsBoolean()
+  @Equals(true)
+  acceptedDataProcessing: boolean;
 }
 
 export class ConfirmManagerRegistrationOtpDto {

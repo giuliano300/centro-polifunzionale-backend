@@ -11,9 +11,10 @@ import { Booking, BookingDocument } from "src/schemas/booking.schema";
 import { Payment, PaymentDocument } from "src/schemas/payment.schema";
 import { CourseBooking } from "src/schemas/course-booking.schema";
 import { NotificationsService } from "./notifications.service";
-import { COURSE_TAG_VALUES, CourseTag } from "src/courses/course-tag.enum";
 import { CourseApprovalStatus } from "src/courses/course-approval-status.enum";
 import { WalletService } from "./wallet.service";
+import { User, UserDocument } from "src/schemas/user.schema";
+import { UserRole } from "src/roles/user-role.enum";
 
 type SearchableCourse = CourseDocument & {
   booking?: {
@@ -44,6 +45,7 @@ export class CourseService {
     @InjectModel(CourseBooking.name) private courseBookingModel: Model<CourseBooking>,
     private notificationsService: NotificationsService,
     private walletService: WalletService,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
   async create(dto: CreateCourseDto, managerId?: string): Promise<Course> {
@@ -355,8 +357,30 @@ export class CourseService {
     }
 
     await this.notifyCourseManager(updated, 'Corso approvato', 'e stato approvato', 'course_approved');
+    await this.notifyInterestedClients(updated);
 
     return updated;
+  }
+
+  private async notifyInterestedClients(course: CourseDocument): Promise<void> {
+    const tags = this.normalizeTags(course.tags);
+    if (!tags.length) return;
+    const interested = await this.userModel.find({ role: UserRole.Cliente, isActive: { $ne: false }, interestedTags: { $in: tags } }).select('_id').lean().exec();
+    const relatedCourses = await this.courseModel.find({ _id: { $ne: (course as any)._id }, tags: { $in: tags } }).select('_id').lean().exec();
+    const previous = relatedCourses.length
+      ? await this.courseBookingModel.find({ course: { $in: relatedCourses.map((item: any) => item._id) }, status: 'confirmed' }).select('user').lean().exec()
+      : [];
+    const userIds = [...new Set([
+      ...interested.map((user: any) => user._id.toString()),
+      ...previous.map((booking: any) => booking.user.toString()),
+    ])];
+    await Promise.all(userIds.map((userId) => this.notificationsService.create({
+      audience: 'cliente', userId,
+      title: 'Nuovo corso per te',
+      message: `È disponibile "${course.title}", in linea con i tuoi interessi o con i corsi a cui hai già partecipato.`,
+      type: 'client_recommended_course_created',
+      link: `/courses?courseId=${(course as any)._id}`,
+    })));
   }
 
   async close(id: string): Promise<Course> {
@@ -526,18 +550,17 @@ export class CourseService {
     return date;
   }
 
-  private normalizeTags(tags?: string[]): CourseTag[] {
+  private normalizeTags(tags?: string[]): string[] {
     if (!Array.isArray(tags)) {
       return [];
     }
 
-    const allowedTags = new Set<string>(COURSE_TAG_VALUES);
     return [...new Set(
       tags
         .map((tag) => String(tag || '').trim().toLowerCase())
-        .filter((tag) => allowedTags.has(tag))
+        .filter(Boolean)
         .slice(0, 20),
-    )] as CourseTag[];
+    )];
   }
 
   private normalizeImageCrop(crop?: { x?: number; y?: number; scale?: number }): { x: number; y: number; scale: number } {

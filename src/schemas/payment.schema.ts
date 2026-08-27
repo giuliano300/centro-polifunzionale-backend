@@ -44,7 +44,23 @@ export class Payment extends Document {
 
   @Prop()
   providerPayload?: string;
+
+  @Prop({ index: true })
+  seriesId?: string;
+
+  @Prop({ default: false })
+  automaticCharge?: boolean;
+
+  @Prop({ type: Date, index: true })
+  dueDate?: Date;
+
+  @Prop()
+  stripeCustomerId?: string;
+
+  @Prop()
+  stripePaymentMethodId?: string;
 }
 
 export type PaymentDocument = Payment & Document;
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
+PaymentSchema.index({ transactionId: 1 }, { unique: true, sparse: true });

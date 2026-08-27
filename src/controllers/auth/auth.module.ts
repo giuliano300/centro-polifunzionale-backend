@@ -9,6 +9,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ManagerRegistrationOtp, ManagerRegistrationOtpSchema } from 'src/schemas/manager-registration-otp.schema';
 import { ManagerPasswordReset, ManagerPasswordResetSchema } from 'src/schemas/manager-password-reset.schema';
 import { ClientRegistrationOtp, ClientRegistrationOtpSchema } from 'src/schemas/client-registration-otp.schema';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { SocialAuthCompletion, SocialAuthCompletionSchema } from 'src/schemas/social-auth-completion.schema';
 
 @Module({
   imports: [
@@ -17,11 +19,16 @@ import { ClientRegistrationOtp, ClientRegistrationOtpSchema } from 'src/schemas/
       { name: ManagerRegistrationOtp.name, schema: ManagerRegistrationOtpSchema },
       { name: ManagerPasswordReset.name, schema: ManagerPasswordResetSchema },
       { name: ClientRegistrationOtp.name, schema: ClientRegistrationOtpSchema },
+      { name: SocialAuthCompletion.name, schema: SocialAuthCompletionSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'a-string-secret-at-least-256-bits-long',
-      signOptions: { expiresIn: '1d' },
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET') || 'a-string-secret-at-least-256-bits-long',
+        signOptions: { expiresIn: '1d' },
+      }),
     }),
   ],
   providers: [AuthService, JwtStrategy],

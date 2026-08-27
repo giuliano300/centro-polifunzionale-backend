@@ -8,11 +8,33 @@ import { NotificationsService } from './notifications.service';
 
 @Injectable()
 export class WalletService {
+  private readonly userWalletQueues = new Map<string, Promise<void>>();
+
   constructor(
     @InjectModel(WalletMovement.name) private walletMovementModel: Model<WalletMovementDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private notificationsService: NotificationsService,
   ) {}
+
+  async withUserWalletLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.userWalletQueues.get(userId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => current);
+    this.userWalletQueues.set(userId, queued);
+
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.userWalletQueues.get(userId) === queued) {
+        this.userWalletQueues.delete(userId);
+      }
+    }
+  }
 
   async creditCancellationRefund(userId: string, bookingId: string, amount: number, description?: string): Promise<WalletMovement | null> {
     if (amount <= 0) {
@@ -125,6 +147,11 @@ export class WalletService {
       return existing;
     }
 
+    const availableBalance = await this.balance(userId);
+    if (amount > availableBalance) {
+      throw new BadRequestException('Credito wallet insufficiente');
+    }
+
     return this.walletMovementModel.create({
       user: new Types.ObjectId(userId),
       booking: new Types.ObjectId(bookingId),
@@ -152,6 +179,11 @@ export class WalletService {
       return existing;
     }
 
+    const availableBalance = await this.balance(userId);
+    if (amount > availableBalance) {
+      throw new BadRequestException('Credito wallet insufficiente');
+    }
+
     return this.walletMovementModel.create({
       user: new Types.ObjectId(userId),
       courseBooking: new Types.ObjectId(courseBookingId),
@@ -161,6 +193,28 @@ export class WalletService {
       currency: 'EUR',
       description,
     });
+  }
+
+  async releaseBookingHold(userId: string, bookingId: string, amount: number): Promise<WalletMovement | null> {
+    if (amount <= 0) return null;
+    const query = {
+      user: new Types.ObjectId(userId), booking: new Types.ObjectId(bookingId),
+      reason: 'booking_hold_release', type: 'credit',
+    };
+    const existing = await this.walletMovementModel.findOne(query).exec();
+    if (existing) return existing;
+    return this.walletMovementModel.create({ ...query, amount, currency: 'EUR', description: 'Rilascio prenotazione scaduta' });
+  }
+
+  async releaseCourseHold(userId: string, courseBookingId: string, amount: number): Promise<WalletMovement | null> {
+    if (amount <= 0) return null;
+    const query = {
+      user: new Types.ObjectId(userId), courseBooking: new Types.ObjectId(courseBookingId),
+      reason: 'course_hold_release', type: 'credit',
+    };
+    const existing = await this.walletMovementModel.findOne(query).exec();
+    if (existing) return existing;
+    return this.walletMovementModel.create({ ...query, amount, currency: 'EUR', description: 'Rilascio iscrizione scaduta' });
   }
 
   async creditCourseRefund(userId: string, courseBookingId: string, amount: number, description?: string): Promise<WalletMovement | null> {
@@ -214,6 +268,27 @@ export class WalletService {
     return movements.reduce((total, movement) => {
       return movement.type === 'credit' ? total + movement.amount : total - movement.amount;
     }, 0);
+  }
+
+  async balances(userIds: string[]): Promise<Record<string, number>> {
+    const ids = userIds.filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id));
+    if (!ids.length) return {};
+
+    const balances = await this.walletMovementModel.aggregate<{ _id: Types.ObjectId; balance: number }>([
+      { $match: { user: { $in: ids } } },
+      {
+        $group: {
+          _id: '$user',
+          balance: {
+            $sum: {
+              $cond: [{ $eq: ['$type', 'credit'] }, '$amount', { $multiply: ['$amount', -1] }]
+            }
+          }
+        }
+      }
+    ]).exec();
+
+    return Object.fromEntries(balances.map((item) => [item._id.toString(), item.balance]));
   }
 
   async summary(userId: string) {

@@ -8,6 +8,7 @@ import { User, UserSchema } from "src/schemas/user.schema";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { WalletModule } from "../wallet/wallet.module";
 import { DiscountCodesModule } from "../discount-codes/discount-codes.module";
+import { SystemSettingsModule } from "../system-settings/system-settings.module";
 
 
 @Module({
@@ -19,7 +20,8 @@ import { DiscountCodesModule } from "../discount-codes/discount-codes.module";
     ]),
     NotificationsModule,
     WalletModule,
-    DiscountCodesModule
+    DiscountCodesModule,
+    SystemSettingsModule
   ],
   controllers: [CourseBookingsController],
   providers: [CourseBookingsService],
